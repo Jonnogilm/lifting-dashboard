@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#171916">
+  <meta name="description" content="Self-hosted lifting and body progress dashboard">
+  <title>IronLog</title>
+  <link rel="manifest" href="/app.webmanifest">
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar" aria-label="Primary navigation">
+      <a class="brand" href="#dashboard" aria-label="IronLog dashboard">
+        <span class="brand-mark">IL</span>
+        <span>IRONLOG</span>
+      </a>
+      <nav class="main-nav">
+        <a class="nav-item active" href="#dashboard" data-route="dashboard"><span class="nav-symbol">D</span><span>Dashboard</span></a>
+        <a class="nav-item" href="#workouts" data-route="workouts"><span class="nav-symbol">W</span><span>Workouts</span></a>
+        <a class="nav-item" href="#exercises" data-route="exercises"><span class="nav-symbol">E</span><span>Exercises</span></a>
+        <a class="nav-item" href="#body" data-route="body"><span class="nav-symbol">B</span><span>Body</span></a>
+        <a class="nav-item" href="#progress" data-route="progress"><span class="nav-symbol">P</span><span>Progress</span></a>
+      </nav>
+      <nav class="sidebar-footer">
+        <a class="nav-item" href="#settings" data-route="settings"><span class="nav-symbol">S</span><span>Settings</span></a>
+        <div class="storage-status"><span class="status-dot"></span><span>Stored on this Pi</span></div>
+      </nav>
+    </aside>
+
+    <div class="mobile-header">
+      <a class="brand" href="#dashboard"><span class="brand-mark">IL</span><span>IRONLOG</span></a>
+      <button class="icon-button" type="button" id="mobile-menu-button" aria-label="Open navigation">Menu</button>
+    </div>
+
+    <main class="main-content">
+      <div id="app" aria-live="polite"></div>
+    </main>
+
+    <nav class="bottom-nav" aria-label="Mobile navigation">
+      <a class="active" href="#dashboard" data-route="dashboard"><span>D</span><small>Home</small></a>
+      <a href="#workouts" data-route="workouts"><span>W</span><small>Workouts</small></a>
+      <button type="button" class="bottom-add" data-action="new-workout" aria-label="Log workout">+</button>
+      <a href="#body" data-route="body"><span>B</span><small>Body</small></a>
+      <a href="#progress" data-route="progress"><span>P</span><small>Progress</small></a>
+    </nav>
+  </div>
+
+  <div id="modal-root"></div>
+  <div id="toast-root" class="toast-root" aria-live="assertive"></div>
+  <script src="/app.js" defer></script>
+</body>
+</html>

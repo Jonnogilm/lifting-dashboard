@@ -1,0 +1,9 @@
+{
+  "name": "IronLog",
+  "short_name": "IronLog",
+  "description": "Self-hosted lifting and body progress dashboard",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f4f5f0",
+  "theme_color": "#171916"
+}
