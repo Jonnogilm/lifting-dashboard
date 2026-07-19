@@ -4,7 +4,7 @@ IronLog is a self-hosted lifting, body measurement, and progress dashboard. It h
 
 ## What you need
 
-- A Raspberry Pi running a recent version of Raspberry Pi OS
+- A Raspberry Pi running Ubuntu Server or Ubuntu Desktop 24.04 LTS
 - A network connection, preferably Ethernet for an always-on server
 - Node.js 18 or newer
 - A free Tailscale account
@@ -23,9 +23,18 @@ npm start
 
 Open `http://localhost:8787`. Application data is stored in `data/lifting-data.json`.
 
-## Install on a Raspberry Pi
+## Install on Ubuntu 24.04 on a Raspberry Pi
 
-The commands below clone IronLog to `/home/<your-user>/ironlog`. Run them in a terminal on the Pi, either directly or over SSH.
+The commands below are for Ubuntu 24.04 LTS and clone IronLog to `/home/<your-user>/ironlog`. Run them in a terminal on the Pi, either directly or over SSH.
+
+Confirm the installed operating system and CPU architecture:
+
+```bash
+. /etc/os-release && echo "$PRETTY_NAME"
+uname -m
+```
+
+The operating system should report Ubuntu 24.04 LTS. A 64-bit Raspberry Pi installation normally reports `aarch64`.
 
 ### 1. Install system packages
 
@@ -42,7 +51,7 @@ node --version
 npm --version
 ```
 
-If Node is older than version 18, update Raspberry Pi OS to a currently supported release before continuing.
+The Ubuntu 24.04 repositories should provide a compatible Node.js version. Do not continue if `node --version` reports anything older than version 18.
 
 ### 2. Clone IronLog
 
@@ -77,7 +86,7 @@ Stop the manual server with `Ctrl+C` before configuring the background service.
 
 ## Start IronLog automatically
 
-The repository includes a `systemd` service template. The following commands adapt it to the current Pi username, clone directory, and Node.js executable:
+The repository includes a `systemd` service template with defaults for Ubuntu's typical `ubuntu` account. The following commands adapt it to the actual Ubuntu username, clone directory, and Node.js executable, so they also work when a custom username was selected during installation:
 
 ```bash
 cd "$HOME/ironlog"
@@ -87,8 +96,8 @@ INSTALL_USER="$(id -un)"
 NODE_PATH="$(command -v node)"
 
 sed \
-  -e "s|User=pi|User=${INSTALL_USER}|" \
-  -e "s|/home/pi/ironlog|${INSTALL_DIR}|g" \
+  -e "s|User=ubuntu|User=${INSTALL_USER}|" \
+  -e "s|/home/ubuntu/ironlog|${INSTALL_DIR}|g" \
   -e "s|/usr/bin/node|${NODE_PATH}|" \
   deploy/ironlog.service | sudo tee /etc/systemd/system/ironlog.service >/dev/null
 
