@@ -1,5 +1,11 @@
 data/*.json
 data/*.tmp
 node_modules/
+coverage/
+*.log
+.env
+.env.*
+!.env.example
+.idea/
+.vscode/
 .DS_Store
-
