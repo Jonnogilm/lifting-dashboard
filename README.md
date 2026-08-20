@@ -1,6 +1,6 @@
 # IronLog
 
-IronLog is a self-hosted lifting, body measurement, and progress dashboard. It has no third-party runtime dependencies: Node's built-in HTTP server serves the application, and data is stored in a local JSON file using atomic writes.
+IronLog is a self-hosted lifting, body measurement, and progress dashboard. The web application has no npm runtime dependencies: Node's built-in HTTP server serves the application, and data is stored in a local JSON file using atomic writes. Optional local recommendation wording is provided by Ollama and Gemma 3 1B.
 
 ## What you need
 
@@ -22,6 +22,24 @@ npm start
 ```
 
 Open `http://localhost:8787`. Application data is stored in `data/lifting-data.json`.
+
+## Local training recommendations
+
+IronLog can analyze recent training after each saved workout and use a local Gemma 3 1B model to rewrite the verified findings. Workout data stays on the Pi. If the model is unavailable, the deterministic analysis still appears on the Progress page.
+
+Install Ollama's ARM64 build and model:
+
+```bash
+curl -fsSL https://ollama.com/download/ollama-linux-arm64.tar.zst -o /tmp/ollama-linux-arm64.tar.zst
+sudo tar --zstd -x -C /usr -f /tmp/ollama-linux-arm64.tar.zst
+sudo useradd -r -s /bin/false -U -m -d /usr/share/ollama ollama 2>/dev/null || true
+sudo cp deploy/ollama.service /etc/systemd/system/ollama.service
+sudo systemctl daemon-reload
+sudo systemctl enable --now ollama
+ollama pull gemma3:1b
+```
+
+Ollama listens only on the Pi's loopback interface. IronLog uses a 2K context window and unloads the model after each analysis to return memory to the system.
 
 ## Install on Ubuntu 24.04 on a Raspberry Pi
 
@@ -271,6 +289,9 @@ tailscale serve off
 ## Configuration
 
 - `PORT`: listening port, default `8787`
+- `OLLAMA_URL`: local Ollama API, default `http://127.0.0.1:11434`
+- `OLLAMA_MODEL`: local model, default `gemma3:1b`
+- `OLLAMA_TIMEOUT_MS`: recommendation timeout, default `180000`
 - `HOST`: listening interface, default `0.0.0.0`
 - `DATA_FILE`: database path, default `data/lifting-data.json`
 

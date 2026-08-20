@@ -3,12 +3,16 @@ const path = require('node:path');
 const fs = require('node:fs');
 const fsp = require('node:fs/promises');
 const { randomUUID } = require('node:crypto');
+const { TARGETS, analyzeTraining, isTrackedBodyweight } = require('./lib/training');
 
 const PORT = Number(process.env.PORT || 8787);
 const HOST = process.env.HOST || '0.0.0.0';
 const PUBLIC_DIR = path.join(__dirname, 'public');
 const DATA_FILE = path.resolve(process.env.DATA_FILE || path.join(__dirname, 'data', 'lifting-data.json'));
 const MAX_BODY_BYTES = 2 * 1024 * 1024;
+const OLLAMA_URL = process.env.OLLAMA_URL || 'http://127.0.0.1:11434';
+const OLLAMA_MODEL = process.env.OLLAMA_MODEL || 'gemma3:1b';
+const OLLAMA_TIMEOUT_MS = Math.max(10000, Number(process.env.OLLAMA_TIMEOUT_MS || 180000));
 
 const exerciseCatalog = [
   ['Back Squat', 'Legs', 'Barbell'], ['Front Squat', 'Legs', 'Barbell'],
@@ -23,12 +27,14 @@ const exerciseCatalog = [
   ['Leg Curl', 'Hamstrings', 'Machine'], ['Bulgarian Split Squat', 'Legs', 'Dumbbell'],
   ['Hip Thrust', 'Glutes', 'Barbell'], ['Calf Raise', 'Calves', 'Machine'],
   ['Biceps Curl', 'Arms', 'Dumbbell'], ['Triceps Pushdown', 'Arms', 'Cable'],
-  ['Dip', 'Chest', 'Bodyweight'], ['Plank', 'Core', 'Bodyweight']
-].map(([name, muscle, equipment]) => ({ id: randomUUID(), name, muscle, equipment, builtIn: true }));
+  ['Dip', 'Chest', 'Bodyweight'], ['Plank', 'Core', 'Bodyweight'],
+  ['Overhead Triceps Extension', 'Arms', 'Cable'], ['Reverse-Grip Triceps Pushdown', 'Arms', 'Cable'],
+  ['Skull Crusher', 'Arms', 'Barbell']
+].map(([name, muscle, equipment]) => ({ id: randomUUID(), name, muscle, equipment, targets: TARGETS[name] || [], builtIn: true }));
 
 function emptyDatabase() {
   return {
-    version: 1,
+    version: 2,
     settings: {
       athleteName: 'Athlete',
       weightUnit: 'lb',
@@ -38,7 +44,8 @@ function emptyDatabase() {
     exercises: exerciseCatalog,
     workouts: [],
     measurements: [],
-    goals: []
+    goals: [],
+    recommendations: null
   };
 }
 
@@ -50,6 +57,16 @@ async function ensureDatabase() {
     await fsp.access(DATA_FILE);
   } catch {
     await saveDatabase(emptyDatabase());
+    return;
+  }
+  const raw = await fsp.readFile(DATA_FILE, 'utf8');
+  const parsed = JSON.parse(raw);
+  if (Number(parsed?.version || 1) < 2) {
+    const stamp = new Date().toISOString().replaceAll(':', '-').replaceAll('.', '-');
+    const backup = path.join(path.dirname(DATA_FILE), `${path.basename(DATA_FILE, '.json')}.v1-${stamp}.json`);
+    await fsp.copyFile(DATA_FILE, backup, fs.constants.COPYFILE_EXCL);
+    await saveDatabase(normalizeDatabase(parsed));
+    console.log(`Database migrated to version 2. Backup: ${backup}`);
   }
 }
 
@@ -70,16 +87,43 @@ function saveDatabase(database) {
   return writeQueue;
 }
 
+function updateRecommendations(recommendations) {
+  writeQueue = writeQueue.then(async () => {
+    const raw = await fsp.readFile(DATA_FILE, 'utf8');
+    const latest = normalizeDatabase(JSON.parse(raw));
+    latest.recommendations = recommendations;
+    const snapshot = JSON.stringify(latest, null, 2);
+    const temp = `${DATA_FILE}.${process.pid}.tmp`;
+    await fsp.writeFile(temp, snapshot, 'utf8');
+    await fsp.rename(temp, DATA_FILE);
+  });
+  return writeQueue;
+}
+
 function normalizeDatabase(value) {
   const fallback = emptyDatabase();
   if (!value || typeof value !== 'object') return fallback;
+  const suppliedExercises = Array.isArray(value.exercises) ? value.exercises : [];
+  const byName = new Map(suppliedExercises.map(item => [item.name, item]));
+  const exercises = suppliedExercises.map(item => ({
+    ...item,
+    targets: Array.isArray(item.targets) && item.targets.length ? item.targets : (TARGETS[item.name] || [])
+  }));
+  for (const builtIn of exerciseCatalog) {
+    if (!byName.has(builtIn.name)) exercises.push(builtIn);
+  }
+  const workouts = [];
+  for (const workout of Array.isArray(value.workouts) ? value.workouts : []) {
+    try { workouts.push(normalizeWorkout(workout, workout)); } catch (error) { console.warn(`Skipping invalid stored workout: ${error.message}`); }
+  }
   return {
-    version: 1,
+    version: 2,
     settings: { ...fallback.settings, ...(value.settings || {}) },
-    exercises: Array.isArray(value.exercises) && value.exercises.length ? value.exercises : fallback.exercises,
-    workouts: Array.isArray(value.workouts) ? value.workouts : [],
+    exercises: exercises.length ? exercises : fallback.exercises,
+    workouts,
     measurements: Array.isArray(value.measurements) ? value.measurements : [],
-    goals: Array.isArray(value.goals) ? value.goals : []
+    goals: Array.isArray(value.goals) ? value.goals : [],
+    recommendations: value.recommendations && typeof value.recommendations === 'object' ? value.recommendations : null
   };
 }
 
@@ -129,18 +173,35 @@ function normalizeWorkout(input, existing = {}) {
   if (!cleanText(input.date) || !exercises.length) {
     throw Object.assign(new Error('A date and at least one exercise are required'), { status: 400 });
   }
-  const normalizedExercises = exercises.map(item => ({
-    id: item.id || randomUUID(),
-    exerciseId: cleanText(item.exerciseId, 80),
-    name: cleanText(item.name, 100) || 'Exercise',
-    sets: (Array.isArray(item.sets) ? item.sets : []).map(set => ({
-      id: set.id || randomUUID(),
-      weight: Math.max(0, finiteNumber(set.weight, 0)),
-      reps: Math.max(0, Math.round(finiteNumber(set.reps, 0))),
-      rpe: Math.min(10, Math.max(0, finiteNumber(set.rpe, 0))),
-      completed: set.completed !== false
-    })).filter(set => set.reps > 0)
-  })).filter(item => item.sets.length);
+  const normalizedExercises = exercises.map(item => {
+    const name = cleanText(item.name, 100) || 'Exercise';
+    const trackedBodyweight = isTrackedBodyweight(name);
+    const itemBodyweight = Math.max(0, finiteNumber(item.bodyweight, 0));
+    const sets = (Array.isArray(item.sets) ? item.sets : []).map(set => {
+      const base = {
+        id: set.id || randomUUID(),
+        reps: Math.max(0, Math.round(finiteNumber(set.reps, 0))),
+        completed: set.completed !== false
+      };
+      if (!trackedBodyweight) return { ...base, weight: Math.max(0, finiteNumber(set.weight, 0)) };
+      const legacyWeight = Math.max(0, finiteNumber(set.weight, itemBodyweight));
+      const bodyweight = Math.max(0, finiteNumber(set.bodyweight, itemBodyweight || legacyWeight));
+      const addedWeight = Math.max(0, finiteNumber(set.addedWeight, 0));
+      return {
+        ...base,
+        bodyweight,
+        addedWeight,
+        weight: Math.round((bodyweight + addedWeight) * 1000) / 1000
+      };
+    }).filter(set => set.reps > 0);
+    return {
+      id: item.id || randomUUID(),
+      exerciseId: cleanText(item.exerciseId, 80),
+      name,
+      ...(trackedBodyweight ? { bodyweight: sets[0]?.bodyweight ?? itemBodyweight } : {}),
+      sets
+    };
+  }).filter(item => item.sets.length);
   if (!normalizedExercises.length) {
     throw Object.assign(new Error('At least one exercise with completed reps is required'), { status: 400 });
   }
@@ -211,7 +272,7 @@ function demoDatabase(current) {
   const find = name => db.exercises.find(item => item.name === name);
   const makeExercise = (name, sets) => {
     const exercise = find(name);
-    return { exerciseId: exercise?.id || randomUUID(), name, sets: sets.map(([weight, reps, rpe]) => ({ weight, reps, rpe, completed: true })) };
+    return { exerciseId: exercise?.id || randomUUID(), name, sets: sets.map(([weight, reps]) => ({ weight, reps, completed: true })) };
   };
   db.settings.athleteName = db.settings.athleteName === 'Athlete' ? 'Alex' : db.settings.athleteName;
   db.workouts = [
@@ -236,26 +297,143 @@ function demoDatabase(current) {
   return db;
 }
 
+let recommendationStatus = { status: 'idle', error: '' };
+let recommendationPromise = null;
+let queuedRecommendationSource = null;
+
+function recommendationPayload(database) {
+  const cached = database.recommendations;
+  const status = recommendationStatus.status === 'idle' && cached ? 'ready' : recommendationStatus.status;
+  return { status, error: recommendationStatus.error || '', ...(cached || {}) };
+}
+
+async function narrateRecommendations(analysis) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), OLLAMA_TIMEOUT_MS);
+  const format = {
+    type: 'object',
+    properties: {
+      items: {
+        type: 'array',
+        items: {
+          type: 'object',
+          properties: { id: { type: 'string' }, recommendation: { type: 'string' } },
+          required: ['id', 'recommendation']
+        }
+      }
+    },
+    required: ['items']
+  };
+  const facts = analysis.items.map(item => ({ id: item.id, title: item.title, evidence: item.evidence, draft: item.recommendation, allowedExercises: item.exercises }));
+  const prompt = [
+    'Rewrite each draft fitness recommendation clearly and concisely for balanced hypertrophy.',
+    'Use only the supplied evidence and allowed exercise names. Do not invent statistics, diagnoses, or extra exercises.',
+    'Muscle-head targeting must be described as emphasis, never isolation. Return every id exactly once.',
+    JSON.stringify({ facts, responseSchema: format })
+  ].join('\\n');
+  try {
+    const response = await fetch(new URL('/api/chat', OLLAMA_URL), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      signal: controller.signal,
+      body: JSON.stringify({
+        model: OLLAMA_MODEL,
+        stream: false,
+        keep_alive: 0,
+        format,
+        options: { num_ctx: 2048, num_predict: 450, temperature: 0.1 },
+        messages: [
+          { role: 'system', content: 'You explain verified workout analysis. You do not provide medical advice.' },
+          { role: 'user', content: prompt }
+        ]
+      })
+    });
+    if (!response.ok) throw new Error('Local model returned HTTP ' + response.status);
+    const payload = await response.json();
+    const parsed = JSON.parse(payload.message?.content || '{}');
+    const rewrites = new Map((Array.isArray(parsed.items) ? parsed.items : []).map(item => [item.id, cleanText(item.recommendation, 700)]));
+    if (!rewrites.size) throw new Error('Local model returned no recommendations');
+    return analysis.items.map(item => {
+      const rewrite = rewrites.get(item.id) || '';
+      const duplicatesTitle = rewrite.toLowerCase() === item.title.toLowerCase();
+      const recommendation = rewrite.length >= 60 && !duplicatesTitle ? rewrite : item.recommendation;
+      return { ...item, recommendation };
+    });
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function scheduleRecommendations(sourceWorkoutId = 'manual') {
+  queuedRecommendationSource = sourceWorkoutId;
+  if (recommendationPromise) return recommendationPromise;
+  recommendationStatus = { status: 'running', error: '' };
+  recommendationPromise = (async () => {
+    while (queuedRecommendationSource) {
+      const source = queuedRecommendationSource;
+      queuedRecommendationSource = null;
+      const database = await loadDatabase();
+      const analysis = analyzeTraining(database);
+      let items = analysis.items;
+      let modelStatus = 'ready';
+      let modelError = '';
+      try {
+        items = await narrateRecommendations(analysis);
+      } catch (error) {
+        modelStatus = 'unavailable';
+        modelError = cleanText(error.name === 'AbortError' ? 'Local model timed out' : error.message, 180);
+        console.warn('Recommendation model unavailable:', modelError);
+      }
+      const recommendations = {
+        generatedAt: new Date().toISOString(),
+        sourceWorkoutId: source,
+        model: OLLAMA_MODEL,
+        modelStatus,
+        modelError,
+        windowDays: analysis.windowDays,
+        workoutCount: analysis.workoutCount,
+        items
+      };
+      await updateRecommendations(recommendations);
+    }
+    recommendationStatus = { status: 'ready', error: '' };
+  })().catch(error => {
+    console.error(error);
+    recommendationStatus = { status: 'error', error: cleanText(error.message, 180) };
+  }).finally(() => {
+    recommendationPromise = null;
+    if (queuedRecommendationSource) scheduleRecommendations(queuedRecommendationSource);
+  });
+  return recommendationPromise;
+}
 async function handleApi(req, res, pathname) {
   let db = await loadDatabase();
   const method = req.method || 'GET';
 
   if (method === 'GET' && pathname === '/api/state') return json(res, 200, db);
   if (method === 'GET' && pathname === '/api/health') return json(res, 200, { status: 'ok' });
+  if (method === 'GET' && pathname === '/api/recommendations') return json(res, 200, recommendationPayload(db));
+  if (method === 'POST' && pathname === '/api/recommendations') {
+    scheduleRecommendations('manual');
+    return json(res, 202, recommendationPayload(db));
+  }
   if (method === 'GET' && pathname === '/api/export') {
     return json(res, 200, db, { 'Content-Disposition': `attachment; filename="ironlog-backup-${new Date().toISOString().slice(0, 10)}.json"` });
   }
 
   const body = await readJson(req);
   let result;
+  let queueRecommendation = false;
 
   if (method === 'POST' && pathname === '/api/workouts') {
     result = normalizeWorkout(body);
     db.workouts.push(result);
+    queueRecommendation = true;
   } else if (method === 'PUT' && pathname.startsWith('/api/workouts/')) {
     const index = findIndexOrThrow(db.workouts, pathname.split('/').pop());
     result = normalizeWorkout(body, db.workouts[index]);
     db.workouts[index] = result;
+    queueRecommendation = true;
   } else if (method === 'DELETE' && pathname.startsWith('/api/workouts/')) {
     const index = findIndexOrThrow(db.workouts, pathname.split('/').pop());
     [result] = db.workouts.splice(index, 1);
@@ -290,7 +468,11 @@ async function handleApi(req, res, pathname) {
     if (nextWeightUnit !== db.settings.weightUnit) {
       const factor = nextWeightUnit === 'kg' ? 0.45359237 : 2.20462262;
       const convert = value => value == null ? value : Math.round(value * factor * 1000) / 1000;
-      db.workouts.forEach(workout => workout.exercises.forEach(exercise => exercise.sets.forEach(set => { set.weight = convert(set.weight); })));
+      db.workouts.forEach(workout => workout.exercises.forEach(exercise => exercise.sets.forEach(set => {
+        if (set.bodyweight != null) set.bodyweight = convert(set.bodyweight);
+        if (set.addedWeight != null) set.addedWeight = convert(set.addedWeight);
+        set.weight = set.bodyweight != null ? Math.round((set.bodyweight + (set.addedWeight || 0)) * 1000) / 1000 : convert(set.weight);
+      })));
       db.measurements.forEach(measurement => { measurement.weight = convert(measurement.weight); });
       db.goals.filter(goal => goal.type === 'strength' || goal.type === 'bodyweight').forEach(goal => {
         goal.start = convert(goal.start);
@@ -325,7 +507,9 @@ async function handleApi(req, res, pathname) {
   }
 
   await saveDatabase(db);
-  return json(res, 200, result);
+  json(res, 200, result);
+  if (queueRecommendation) scheduleRecommendations(result.id);
+  return undefined;
 }
 
 const contentTypes = {
@@ -381,4 +565,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { createServer, emptyDatabase, normalizeWorkout, normalizeMeasurement, normalizeGoal };
+module.exports = { createServer, emptyDatabase, normalizeDatabase, normalizeWorkout, normalizeMeasurement, normalizeGoal };

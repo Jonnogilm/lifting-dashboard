@@ -1,7 +1,7 @@
 [Unit]
 Description=IronLog lifting dashboard
-Wants=network-online.target
-After=network-online.target
+Wants=network-online.target ollama.service
+After=network-online.target ollama.service
 
 [Service]
 Type=simple
@@ -12,6 +12,9 @@ Restart=on-failure
 RestartSec=5
 Environment=NODE_ENV=production
 Environment=PORT=8787
+Environment=OLLAMA_URL=http://127.0.0.1:11434
+Environment=OLLAMA_MODEL=gemma3:1b
+Environment=OLLAMA_TIMEOUT_MS=180000
 
 [Install]
 WantedBy=multi-user.target
