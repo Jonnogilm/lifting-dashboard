@@ -6,7 +6,7 @@ const fs = require('node:fs/promises');
 
 process.env.DATA_FILE = path.join(os.tmpdir(), `ironlog-test-${process.pid}.json`);
 process.env.OLLAMA_URL = 'http://127.0.0.1:1';
-const { createServer, normalizeDatabase, normalizeWorkout } = require('../server');
+const { createServer, normalizeDatabase, normalizeWorkout, applyNarratedRecommendation } = require('../server');
 
 let server;
 let baseUrl;
@@ -120,6 +120,27 @@ test('recommendation endpoint falls back cleanly when the local model is unavail
   assert.equal(result.status, 'ready');
   assert.ok(result.items.length > 0);
   assert.ok(['ready', 'unavailable'].includes(result.modelStatus));
+});
+
+test('reports truncated and malformed local model responses clearly', () => {
+  const item = { id: 'balance', title: 'Add balance', recommendation: 'Original verified recommendation.' };
+  assert.throws(
+    () => applyNarratedRecommendation({ done_reason: 'length', message: { content: '{"recommendation":' } }, item),
+    /response was truncated/
+  );
+  assert.throws(
+    () => applyNarratedRecommendation({ done_reason: 'stop', message: { content: '{"recommendation":' } }, item),
+    /invalid JSON/
+  );
+});
+
+test('applies valid local model recommendation rewrites', () => {
+  const item = { id: 'balance', title: 'Add balance', recommendation: 'Original verified recommendation.' };
+  const rewritten = applyNarratedRecommendation({
+    done_reason: 'stop',
+    message: { content: JSON.stringify({ recommendation: 'Use a measured mix of movements across the week while preserving recovery and steadily progressing the loads you can complete with consistent technique.' }) }
+  }, item);
+  assert.match(rewritten.recommendation, /measured mix/);
 });
 
 test('loads demo data and exports a valid backup', async () => {

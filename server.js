@@ -13,6 +13,7 @@ const MAX_BODY_BYTES = 2 * 1024 * 1024;
 const OLLAMA_URL = process.env.OLLAMA_URL || 'http://127.0.0.1:11434';
 const OLLAMA_MODEL = process.env.OLLAMA_MODEL || 'gemma3:1b';
 const OLLAMA_TIMEOUT_MS = Math.max(10000, Number(process.env.OLLAMA_TIMEOUT_MS || 180000));
+const OLLAMA_NUM_PREDICT = Math.max(80, Number(process.env.OLLAMA_NUM_PREDICT || 180));
 
 const exerciseCatalog = [
   ['Back Squat', 'Legs', 'Barbell'], ['Front Squat', 'Legs', 'Barbell'],
@@ -307,58 +308,63 @@ function recommendationPayload(database) {
   return { status, error: recommendationStatus.error || '', ...(cached || {}) };
 }
 
+function applyNarratedRecommendation(payload, item) {
+  if (payload?.done_reason === 'length') {
+    throw new Error('Local model response was truncated; increase OLLAMA_NUM_PREDICT');
+  }
+  const content = cleanText(payload?.message?.content, 20000);
+  if (!content) throw new Error('Local model returned an empty response');
+  let parsed;
+  try {
+    parsed = JSON.parse(content);
+  } catch {
+    throw new Error('Local model returned invalid JSON');
+  }
+  const rewrite = cleanText(parsed.recommendation, 700);
+  if (!rewrite) throw new Error('Local model returned no recommendation');
+  const duplicatesTitle = rewrite.toLowerCase() === item.title.toLowerCase();
+  const recommendation = rewrite.length >= 60 && !duplicatesTitle ? rewrite : item.recommendation;
+  return { ...item, recommendation };
+}
+
 async function narrateRecommendations(analysis) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), OLLAMA_TIMEOUT_MS);
   const format = {
     type: 'object',
-    properties: {
-      items: {
-        type: 'array',
-        items: {
-          type: 'object',
-          properties: { id: { type: 'string' }, recommendation: { type: 'string' } },
-          required: ['id', 'recommendation']
-        }
-      }
-    },
-    required: ['items']
+    properties: { recommendation: { type: 'string' } },
+    required: ['recommendation']
   };
-  const facts = analysis.items.map(item => ({ id: item.id, title: item.title, evidence: item.evidence, draft: item.recommendation, allowedExercises: item.exercises }));
-  const prompt = [
-    'Rewrite each draft fitness recommendation clearly and concisely for balanced hypertrophy.',
-    'Use only the supplied evidence and allowed exercise names. Do not invent statistics, diagnoses, or extra exercises.',
-    'Muscle-head targeting must be described as emphasis, never isolation. Return every id exactly once.',
-    JSON.stringify({ facts, responseSchema: format })
-  ].join('\\n');
   try {
-    const response = await fetch(new URL('/api/chat', OLLAMA_URL), {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      signal: controller.signal,
-      body: JSON.stringify({
-        model: OLLAMA_MODEL,
-        stream: false,
-        keep_alive: 0,
-        format,
-        options: { num_ctx: 2048, num_predict: 450, temperature: 0.1 },
-        messages: [
-          { role: 'system', content: 'You explain verified workout analysis. You do not provide medical advice.' },
-          { role: 'user', content: prompt }
-        ]
-      })
-    });
-    if (!response.ok) throw new Error('Local model returned HTTP ' + response.status);
-    const payload = await response.json();
-    const parsed = JSON.parse(payload.message?.content || '{}');
-    const rewrites = new Map((Array.isArray(parsed.items) ? parsed.items : []).map(item => [item.id, cleanText(item.recommendation, 700)]));
-    if (!rewrites.size) throw new Error('Local model returned no recommendations');
-    return analysis.items.map(item => {
-      const rewrite = rewrites.get(item.id) || '';
-      const duplicatesTitle = rewrite.toLowerCase() === item.title.toLowerCase();
-      const recommendation = rewrite.length >= 60 && !duplicatesTitle ? rewrite : item.recommendation;
-      return { ...item, recommendation };
-    });
+    const narrated = [];
+    for (const [index, item] of analysis.items.entries()) {
+      const facts = { title: item.title, evidence: item.evidence, draft: item.recommendation, allowedExercises: item.exercises };
+      const prompt = [
+        'Rewrite the draft recommendation in one sentence of no more than 35 words.',
+        'Preserve its meaning. Use only the supplied evidence and allowed exercise names.',
+        'Do not invent statistics, diagnoses, or extra exercises. Describe muscle-head targeting as emphasis, never isolation.',
+        JSON.stringify(facts)
+      ].join('\n');
+      const response = await fetch(new URL('/api/chat', OLLAMA_URL), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        signal: controller.signal,
+        body: JSON.stringify({
+          model: OLLAMA_MODEL,
+          stream: false,
+          keep_alive: index === analysis.items.length - 1 ? 0 : '2m',
+          format,
+          options: { num_ctx: 1024, num_predict: OLLAMA_NUM_PREDICT, temperature: 0.1 },
+          messages: [
+            { role: 'system', content: 'You rewrite one verified workout recommendation. Return one concise sentence only.' },
+            { role: 'user', content: prompt }
+          ]
+        })
+      });
+      if (!response.ok) throw new Error('Local model returned HTTP ' + response.status);
+      narrated.push(applyNarratedRecommendation(await response.json(), item));
+    }
+    return narrated;
   } finally {
     clearTimeout(timeout);
   }
@@ -565,4 +571,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { createServer, emptyDatabase, normalizeDatabase, normalizeWorkout, normalizeMeasurement, normalizeGoal };
+module.exports = { createServer, emptyDatabase, normalizeDatabase, normalizeWorkout, normalizeMeasurement, normalizeGoal, applyNarratedRecommendation };

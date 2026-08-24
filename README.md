@@ -292,6 +292,7 @@ tailscale serve off
 - `OLLAMA_URL`: local Ollama API, default `http://127.0.0.1:11434`
 - `OLLAMA_MODEL`: local model, default `gemma3:1b`
 - `OLLAMA_TIMEOUT_MS`: recommendation timeout, default `180000`
+- `OLLAMA_NUM_PREDICT`: maximum tokens per recommendation rewrite, default `180`
 - `HOST`: listening interface, default `0.0.0.0`
 - `DATA_FILE`: database path, default `data/lifting-data.json`
 

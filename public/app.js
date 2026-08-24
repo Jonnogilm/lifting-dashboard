@@ -9,6 +9,9 @@ const ui = {
   exerciseSearch: '',
   exerciseMuscle: 'All',
   strengthExercise: '',
+  bodyCompositionMetric: 'weight',
+  circumferenceMetric: 'waist',
+  recoveryMetric: 'restingHeartRate',
   workoutDraft: null,
   recommendations: null,
   initialDraftChecked: false,
@@ -303,11 +306,47 @@ function measurementValue(value, suffix, digits = 1) {
   return value == null ? '--' : `${number(value, digits)} ${suffix}`;
 }
 
+const BODY_TREND_GROUPS = [
+  {
+    id: 'body-composition-metric', stateKey: 'bodyCompositionMetric', title: 'Body composition', color: 'coral',
+    metrics: [
+      { key: 'weight', label: 'Bodyweight', suffix: () => ` ${unit()}` },
+      { key: 'bodyFat', label: 'Body fat', suffix: () => '%' }
+    ]
+  },
+  {
+    id: 'circumference-metric', stateKey: 'circumferenceMetric', title: 'Circumferences', color: 'blue',
+    metrics: [
+      { key: 'waist', label: 'Waist' }, { key: 'chest', label: 'Chest' },
+      { key: 'neck', label: 'Neck' }, { key: 'hips', label: 'Hips' },
+      { key: 'leftArm', label: 'Left arm' }, { key: 'rightArm', label: 'Right arm' },
+      { key: 'leftThigh', label: 'Left thigh' }, { key: 'rightThigh', label: 'Right thigh' }
+    ].map(metric => ({ ...metric, suffix: () => ` ${measureUnit()}` }))
+  },
+  {
+    id: 'recovery-metric', stateKey: 'recoveryMetric', title: 'Recovery', color: 'green',
+    metrics: [
+      { key: 'restingHeartRate', label: 'Resting heart rate', suffix: () => ' bpm' },
+      { key: 'sleep', label: 'Sleep', suffix: () => ' hrs' }
+    ]
+  }
+];
+
+function bodyTrendPanel(group, measurements) {
+  const metric = group.metrics.find(item => item.key === ui[group.stateKey]) || group.metrics[0];
+  const points = measurements
+    .filter(item => item[metric.key] != null)
+    .map(item => ({ date: item.date, value: item[metric.key] }));
+  return `<article class="panel body-trend-panel"><div class="panel-header"><div><h2>${escapeHtml(group.title)}</h2><p class="panel-subtitle">${escapeHtml(metric.label)} over all check-ins</p></div>
+    <select class="select-compact" id="${group.id}" aria-label="${escapeHtml(group.title)} chart metric">${group.metrics.map(item => `<option value="${item.key}" ${item.key === metric.key ? 'selected' : ''}>${escapeHtml(item.label)}</option>`).join('')}</select>
+    </div><div class="chart-wrap">${lineChart(points, metric.suffix(), group.color)}</div></article>`;
+}
+
 function renderBody() {
   const latest = latestMeasurement();
   const previous = previousMeasurement();
   const sorted = [...state.measurements].sort((a, b) => a.date.localeCompare(b.date));
-  const weightPoints = sorted.filter(item => item.weight != null).map(item => ({ date: item.date, value: item.weight }));
+
   const fields = [
     ['Waist', 'waist'], ['Chest', 'chest'], ['Neck', 'neck'], ['Hips', 'hips'],
     ['Left arm', 'leftArm'], ['Right arm', 'rightArm'], ['Left thigh', 'leftThigh'], ['Right thigh', 'rightThigh']
@@ -319,11 +358,9 @@ function renderBody() {
       ${statCard('Resting heart rate', latest?.restingHeartRate != null ? `${number(latest.restingHeartRate)} <small>bpm</small>` : '--', latest?.restingHeartRate != null ? 'Latest check-in' : 'No data yet', 'HR', 'blue')}
       ${statCard('Sleep', latest?.sleep != null ? `${number(latest.sleep, 1)} <small>hrs</small>` : '--', latest?.sleep != null ? 'Latest nightly average' : 'No data yet', 'ZZ', 'acid')}
     </section>
-    <section class="dashboard-grid">
-      <article class="panel"><div class="panel-header"><div><h2>Bodyweight trend</h2><p class="panel-subtitle">All check-ins, ${unit()}</p></div></div><div class="chart-wrap">${lineChart(weightPoints, ` ${unit()}`)}</div></article>
-      <article class="panel"><div class="panel-header"><div><h2>Latest measurements</h2><p class="panel-subtitle">${latest ? longDate(latest.date) : 'No check-ins'}</p></div></div>
-        ${latest ? `<div class="measurement-grid">${fields.map(([label, key]) => `<div class="measurement-tile"><span>${label}</span><strong>${measurementValue(latest[key], measureUnit())}</strong></div>`).join('')}</div>` : emptyState('No measurements', 'Add a body check-in to establish your baseline.')}</article>
-    </section>
+    <section class="body-trend-grid">${BODY_TREND_GROUPS.map(group => bodyTrendPanel(group, sorted)).join('')}</section>
+    <article class="panel latest-measurements"><div class="panel-header"><div><h2>Latest measurements</h2><p class="panel-subtitle">${latest ? longDate(latest.date) : 'No check-ins'}</p></div></div>
+      ${latest ? `<div class="measurement-grid">${fields.map(([label, key]) => `<div class="measurement-tile"><span>${label}</span><strong>${measurementValue(latest[key], measureUnit())}</strong></div>`).join('')}</div>` : emptyState('No measurements', 'Add a body check-in to establish your baseline.')}</article>
     <article class="panel table-panel"><div class="panel-header"><div><h2>Check-in history</h2><p class="panel-subtitle">Body and recovery markers</p></div></div>
       ${state.measurements.length ? `<div class="table-scroll"><table class="data-table"><thead><tr><th>Date</th><th>Weight</th><th>Body fat</th><th>Waist</th><th>RHR</th><th>Sleep</th><th></th></tr></thead><tbody>${[...state.measurements].sort((a,b) => b.date.localeCompare(a.date)).map(item => `<tr><td>${longDate(item.date)}</td><td>${measurementValue(item.weight, unit())}</td><td>${measurementValue(item.bodyFat, '%')}</td><td>${measurementValue(item.waist, measureUnit())}</td><td>${measurementValue(item.restingHeartRate, 'bpm', 0)}</td><td>${measurementValue(item.sleep, 'hrs')}</td><td><div class="row-actions"><button class="link-button" data-action="edit-measurement" data-id="${item.id}">Edit</button><button class="link-button danger" data-action="delete-measurement" data-id="${item.id}">Delete</button></div></td></tr>`).join('')}</tbody></table></div>` : emptyState('No check-ins yet', 'Body measurements and recovery stats will appear here.', '<button class="button primary" data-action="new-measurement">Add check-in</button>')}
     </article>`;
@@ -907,6 +944,9 @@ document.addEventListener('input', event => {
 document.addEventListener('change', event => {
   if (event.target.id === 'strength-exercise') { ui.strengthExercise = event.target.value; render(); }
   if (event.target.id === 'muscle-filter') { ui.exerciseMuscle = event.target.value; render(); }
+  for (const group of BODY_TREND_GROUPS) {
+    if (event.target.id === group.id) { ui[group.stateKey] = event.target.value; render(); }
+  }
   if (event.target.id === 'import-file' && event.target.files[0]) {
     const reader = new FileReader();
     reader.onload = async () => {
