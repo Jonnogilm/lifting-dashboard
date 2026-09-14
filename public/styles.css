@@ -316,6 +316,18 @@ h3 { margin-bottom: 0; font-size: 14px; letter-spacing: 0; }
   .workout-card { padding: 14px; }
   .modal-backdrop { align-items: end; padding: 0; }
   .modal, .modal.wide { width: 100%; max-height: min(94dvh, var(--app-height, 94dvh)); border-radius: 8px 8px 0 0; }
+  .workout-modal-backdrop {
+    inset: var(--visual-viewport-top, 0px) 0 auto;
+    height: var(--app-height, 100dvh);
+    align-items: stretch;
+    overflow: hidden;
+  }
+  .modal.workout-modal {
+    height: 100%;
+    max-height: none;
+    border-radius: 0;
+    overscroll-behavior: contain;
+  }
   .modal-body { padding: 16px; }
   .sets-header, .set-row { grid-template-columns: 28px minmax(82px, 1fr) minmax(58px, .75fr) 28px; gap: 5px; }
   .set-row input, .bodyweight-input input, .template-picker > input, .exercise-search-picker > input { padding: 5px; font-size: 16px; }

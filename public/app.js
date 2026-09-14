@@ -20,6 +20,8 @@ const ui = {
 };
 
 let state = null;
+let modalPageScrollY = 0;
+let modalPageScrollLocked = false;
 
 const escapeHtml = value => String(value ?? '')
   .replaceAll('&', '&amp;')
@@ -471,12 +473,19 @@ function render() {
   document.querySelector('.sidebar')?.classList.remove('open');
 }
 
-function openModal(title, body, { wide = false, footer = '', autoFocus = true } = {}) {
-  modalRoot.innerHTML = `<div class="modal-backdrop" data-action="backdrop-close"><section class="modal ${wide ? 'wide' : ''}" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+function openModal(title, body, { wide = false, footer = '', autoFocus = true, workout = false } = {}) {
+  modalRoot.innerHTML = `<div class="modal-backdrop ${workout ? 'workout-modal-backdrop' : ''}" data-action="backdrop-close"><section class="modal ${wide ? 'wide' : ''} ${workout ? 'workout-modal' : ''}" role="dialog" aria-modal="true" aria-labelledby="modal-title">
     <header class="modal-header"><h2 id="modal-title">${escapeHtml(title)}</h2><button class="icon-button" data-action="close-modal" aria-label="Close">x</button></header>
     <div class="modal-body">${body}</div>${footer ? `<footer class="modal-footer">${footer}</footer>` : ''}
   </section></div>`;
-  document.body.style.overflow = 'hidden';
+  if (!modalPageScrollLocked) {
+    modalPageScrollY = window.scrollY;
+    modalPageScrollLocked = true;
+    document.body.style.position = 'fixed';
+    document.body.style.inset = `${-modalPageScrollY}px 0 auto`;
+    document.body.style.width = '100%';
+    document.body.style.overflow = 'hidden';
+  }
   if (autoFocus) modalRoot.querySelector('input, select, textarea, button')?.focus();
 }
 
@@ -520,7 +529,14 @@ function loadWorkoutDraft() {
 
 function closeModal() {
   modalRoot.innerHTML = '';
-  document.body.style.overflow = '';
+  if (modalPageScrollLocked) {
+    modalPageScrollLocked = false;
+    document.body.style.position = '';
+    document.body.style.inset = '';
+    document.body.style.width = '';
+    document.body.style.overflow = '';
+    window.scrollTo(0, modalPageScrollY);
+  }
   ui.workoutDraft = null;
   ui.exercisePickerQuery = '';
   ui.templateQuery = '';
@@ -541,7 +557,8 @@ function openWorkoutModal(workout = null, restoredDraft = null) {
   ui.templateQuery = '';
   openModal(ui.workoutDraft.id ? 'Edit workout' : 'Log workout', workoutForm(), {
     wide: true,
-    autoFocus: !restoredDraft,
+    workout: true,
+    autoFocus: !restoredDraft && !window.matchMedia('(max-width: 520px)').matches,
     footer: `<button class="button" data-action="close-modal">Cancel</button><button class="button primary" data-action="save-workout">${ui.workoutDraft.id ? 'Save changes' : 'Finish workout'}</button>`
   });
   renderWorkoutEntries();
@@ -977,13 +994,16 @@ window.addEventListener('hashchange', () => {
 });
 
 function updateMobileViewport() {
-  const height = window.visualViewport?.height || window.innerHeight;
+  const viewport = window.visualViewport;
+  const height = viewport?.height || window.innerHeight;
   document.documentElement.style.setProperty('--app-height', `${height}px`);
+  document.documentElement.style.setProperty('--visual-viewport-top', `${viewport?.offsetTop || 0}px`);
 }
 
 updateMobileViewport();
 window.addEventListener('resize', updateMobileViewport);
 window.visualViewport?.addEventListener('resize', updateMobileViewport);
+window.visualViewport?.addEventListener('scroll', updateMobileViewport);
 window.addEventListener('pageshow', () => {
   updateMobileViewport();
   if (!ui.workoutDraft) {
