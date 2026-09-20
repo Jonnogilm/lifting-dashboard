@@ -33,6 +33,27 @@ test('serves the application and creates an empty database', async () => {
   assert.deepEqual(state.workouts, []);
 });
 
+test('deletes custom and built-in exercises permanently', async () => {
+  const custom = await fetch(`${baseUrl}/api/exercises`, {
+    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name: 'Test Movement', muscle: 'Other', equipment: 'Other' })
+  }).then(response => response.json());
+  const beforeDelete = await fetch(`${baseUrl}/api/state`).then(response => response.json());
+  const builtIn = beforeDelete.exercises.find(item => item.builtIn);
+  assert.ok(builtIn);
+
+  for (const exercise of [custom, builtIn]) {
+    const response = await fetch(`${baseUrl}/api/exercises/${exercise.id}`, {
+      method: 'DELETE', headers: { 'content-type': 'application/json' }, body: '{}'
+    });
+    assert.equal(response.status, 200);
+  }
+
+  const afterDelete = await fetch(`${baseUrl}/api/state`).then(response => response.json());
+  assert.equal(afterDelete.exercises.some(item => item.id === custom.id), false);
+  assert.equal(afterDelete.exercises.some(item => item.name === builtIn.name), false);
+  assert.ok(afterDelete.deletedExercises.includes(builtIn.name));
+});
+
 test('creates, updates, and deletes a workout', async () => {
   const payload = {
     date: '2026-07-19',

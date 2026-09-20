@@ -300,7 +300,7 @@ function renderExercises() {
       const record = records.get(exercise.name);
       const sessions = state.workouts.filter(workout => workout.exercises.some(item => item.name === exercise.name)).length;
       return `<article class="exercise-card"><div class="exercise-card-top"><div><h3>${escapeHtml(exercise.name)}</h3><p class="exercise-meta">${escapeHtml(exercise.muscle)} · ${escapeHtml(exercise.equipment)}</p></div><span class="exercise-monogram">${escapeHtml(exercise.name.split(/\s+/).map(word => word[0]).slice(0, 2).join(''))}</span></div>
-        <div class="exercise-record"><span><span class="muted">Best e1RM</span><br><strong>${record && record.weight > 0 ? `${number(record.estimated, 1)} ${unit()}` : '--'}</strong></span><span><span class="muted">Sessions</span><br><strong>${sessions}</strong></span></div></article>`;
+        <div class="exercise-record"><span><span class="muted">Best e1RM</span><br><strong>${record && record.weight > 0 ? `${number(record.estimated, 1)} ${unit()}` : '--'}</strong></span><span><span class="muted">Sessions</span><br><strong>${sessions}</strong></span><button class="link-button danger" data-action="delete-exercise" data-id="${exercise.id}" aria-label="Delete ${escapeHtml(exercise.name)}">Delete</button></div></article>`;
     }).join('')}</div>` : emptyState('No matching exercises', 'Adjust your search or add a custom movement.')}`;
 }
 
@@ -884,6 +884,10 @@ document.addEventListener('click', async event => {
   if (action === 'edit-goal') openGoalModal(state.goals.find(item => item.id === target.dataset.id));
   if (action === 'delete-goal') deleteRecord('goals', target.dataset.id, 'Delete this goal?');
   if (action === 'new-exercise') openExerciseModal();
+  if (action === 'delete-exercise') {
+    const exercise = state.exercises.find(item => item.id === target.dataset.id);
+    if (exercise) deleteRecord('exercises', exercise.id, `Delete ${exercise.name} from your exercise library? Past workouts will be kept.`);
+  }
   if (action === 'close-modal') closeModal();
   if (action === 'backdrop-close' && event.target === target) closeModal();
   if (action === 'save-workout') saveWorkout();

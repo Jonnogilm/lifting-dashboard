@@ -43,6 +43,7 @@ function emptyDatabase() {
       weekStartsOn: 'monday'
     },
     exercises: exerciseCatalog,
+    deletedExercises: [],
     workouts: [],
     measurements: [],
     goals: [],
@@ -104,6 +105,9 @@ function updateRecommendations(recommendations) {
 function normalizeDatabase(value) {
   const fallback = emptyDatabase();
   if (!value || typeof value !== 'object') return fallback;
+  const deletedExercises = [...new Set((Array.isArray(value.deletedExercises) ? value.deletedExercises : [])
+    .map(item => cleanText(item, 100)).filter(Boolean))];
+  const deletedExerciseNames = new Set(deletedExercises);
   const suppliedExercises = Array.isArray(value.exercises) ? value.exercises : [];
   const byName = new Map(suppliedExercises.map(item => [item.name, item]));
   const exercises = suppliedExercises.map(item => ({
@@ -111,7 +115,7 @@ function normalizeDatabase(value) {
     targets: Array.isArray(item.targets) && item.targets.length ? item.targets : (TARGETS[item.name] || [])
   }));
   for (const builtIn of exerciseCatalog) {
-    if (!byName.has(builtIn.name)) exercises.push(builtIn);
+    if (!byName.has(builtIn.name) && !deletedExerciseNames.has(builtIn.name)) exercises.push(builtIn);
   }
   const workouts = [];
   for (const workout of Array.isArray(value.workouts) ? value.workouts : []) {
@@ -120,7 +124,8 @@ function normalizeDatabase(value) {
   return {
     version: 2,
     settings: { ...fallback.settings, ...(value.settings || {}) },
-    exercises: exercises.length ? exercises : fallback.exercises,
+    exercises,
+    deletedExercises,
     workouts,
     measurements: Array.isArray(value.measurements) ? value.measurements : [],
     goals: Array.isArray(value.goals) ? value.goals : [],
@@ -468,6 +473,10 @@ async function handleApi(req, res, pathname) {
     if (!name) throw Object.assign(new Error('Exercise name is required'), { status: 400 });
     result = { id: randomUUID(), name, muscle: cleanText(body.muscle, 60) || 'Other', equipment: cleanText(body.equipment, 60) || 'Other', builtIn: false };
     db.exercises.push(result);
+  } else if (method === 'DELETE' && pathname.startsWith('/api/exercises/')) {
+    const index = findIndexOrThrow(db.exercises, pathname.split('/').pop());
+    [result] = db.exercises.splice(index, 1);
+    if (result.builtIn && !db.deletedExercises.includes(result.name)) db.deletedExercises.push(result.name);
   } else if (method === 'PUT' && pathname === '/api/settings') {
     const nextWeightUnit = body.weightUnit === 'kg' ? 'kg' : 'lb';
     const nextMeasurementUnit = body.measurementUnit === 'cm' ? 'cm' : 'in';

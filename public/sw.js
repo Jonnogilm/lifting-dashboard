@@ -1,4 +1,4 @@
-const CACHE = 'ironlog-shell-v3';
+const CACHE = 'ironlog-shell-v4';
 const ASSETS = ['/', '/styles.css', '/app.js', '/app.webmanifest'];
 
 self.addEventListener('install', event => {
