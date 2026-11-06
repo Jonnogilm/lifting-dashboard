@@ -346,3 +346,13 @@ h3 { margin-bottom: 0; font-size: 14px; letter-spacing: 0; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; transition: none !important; }
 }
+
+.strength-panel .panel-header { flex-wrap: wrap; align-items: flex-start; }
+.strength-selectors { display: flex; flex-wrap: wrap; gap: 10px; max-width: 100%; }
+.strength-selectors label { display: grid; gap: 4px; font-size: 12px; color: var(--ink-soft); min-width: 0; }
+.strength-selectors .select-compact { width: 100%; max-width: 240px; }
+@media (max-width: 600px) {
+  .strength-selectors { width: 100%; }
+  .strength-selectors label { flex: 1 1 140px; }
+  .strength-selectors .select-compact { max-width: none; }
+}

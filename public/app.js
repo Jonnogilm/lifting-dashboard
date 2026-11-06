@@ -10,6 +10,8 @@ const ui = {
   exerciseSearch: '',
   exerciseMuscle: 'All',
   strengthExercise: '',
+  strengthVariation: '',
+  strengthSelections: {},
   bodyCompositionMetric: 'weight',
   circumferenceMetric: 'waist',
   recoveryMetric: 'restingHeartRate',
@@ -100,17 +102,91 @@ function personalRecords() {
   return [...records.values()].sort((a, b) => b.estimated - a.estimated);
 }
 
-function strengthHistory(exerciseName) {
+// Resolve catalog IDs first so renamed and separately logged variations stay distinct.
+function trackingExercise(entry) {
+  const catalog = state.exercises.find(item => item.id === entry.exerciseId)
+    || (!entry.exerciseId ? state.exercises.find(item => item.name === entry.name) : null);
+  const name = catalog?.name || entry.name;
+  const family = catalog?.family || entry.family || name;
+  return {
+    key: catalog?.id || entry.exerciseId || `name:${name}`,
+    family,
+    name,
+    variation: catalog?.variation || entry.variation || (name === family ? 'Unspecified' : name)
+  };
+}
+
+function strengthOptions() {
+  const entries = new Map(state.exercises.map(item => {
+    const resolved = trackingExercise({ exerciseId: item.id, name: item.name });
+    return [resolved.key, resolved];
+  }));
+  for (const workout of state.workouts) for (const entry of workout.exercises) {
+    const resolved = trackingExercise(entry);
+    if (!entries.has(resolved.key)) entries.set(resolved.key, resolved);
+  }
+  return [...entries.values()].sort((a, b) => a.family.localeCompare(b.family) || a.variation.localeCompare(b.variation, undefined, { numeric: true }));
+}
+
+function selectStrengthTracking() {
+  const options = strengthOptions();
+  const families = [...new Set(options.map(item => item.family))];
+  const latestTracked = [...state.workouts].sort((a, b) => b.date.localeCompare(a.date))
+    .flatMap(workout => workout.exercises).filter(entry => entry.sets.some(set => set.completed !== false && Number(set.reps) > 0 && Number(set.weight) > 0))
+    .map(trackingExercise);
+  if (!families.includes(ui.strengthExercise)) ui.strengthExercise = latestTracked[0]?.family || families[0] || '';
+  const variants = options.filter(item => item.family === ui.strengthExercise);
+  const remembered = ui.strengthSelections[ui.strengthExercise];
+  if (!variants.some(item => item.key === ui.strengthVariation)) {
+    ui.strengthVariation = variants.find(item => item.key === remembered)?.key
+      || latestTracked.find(item => item.family === ui.strengthExercise)?.key || variants[0]?.key || '';
+  }
+  ui.strengthSelections[ui.strengthExercise] = ui.strengthVariation;
+  return { families, variants, selected: variants.find(item => item.key === ui.strengthVariation) };
+}
+
+function strengthSelectors(selection) {
+  return `<div class="strength-selectors">
+    <label for="strength-exercise">Exercise<select class="select-compact" id="strength-exercise">${selection.families.map(name => `<option value="${escapeHtml(name)}" ${name === ui.strengthExercise ? 'selected' : ''}>${escapeHtml(name)}</option>`).join('')}</select></label>
+    ${selection.variants.length > 1 || selection.selected?.variation !== 'Unspecified' ? `<label for="strength-variation">Variation<select class="select-compact" id="strength-variation">${selection.variants.map(item => `<option value="${escapeHtml(item.key)}" ${item.key === ui.strengthVariation ? 'selected' : ''}>${escapeHtml(item.variation)}</option>`).join('')}</select></label>` : ''}
+  </div>`;
+}
+
+function strengthHistory(variationKey) {
   return [...state.workouts]
     .sort((a, b) => a.date.localeCompare(b.date))
     .map(workout => {
-      const exerciseSets = workout.exercises.filter(item => item.name === exerciseName).flatMap(item => item.sets);
+      const exerciseSets = workout.exercises.filter(item => trackingExercise(item).key === variationKey)
+        .flatMap(item => item.sets).filter(set => set.completed !== false && Number(set.reps) > 0 && Number(set.weight) > 0);
       if (!exerciseSets.length) return null;
-      return {
-        date: workout.date,
-        value: Math.max(...exerciseSets.map(set => estimateOneRepMax(set.weight, set.reps)))
-      };
+      return { date: workout.date, value: Math.max(...exerciseSets.map(set => estimateOneRepMax(set.weight, set.reps))) };
     }).filter(Boolean);
+}
+
+function selectedStrengthRecord(variationKey) {
+  let best = null;
+  for (const workout of state.workouts) for (const entry of workout.exercises) {
+    if (trackingExercise(entry).key !== variationKey) continue;
+    for (const set of entry.sets) {
+      if (set.completed === false || Number(set.reps) <= 0 || Number(set.weight) <= 0) continue;
+      const estimated = estimateOneRepMax(set.weight, set.reps);
+      if (!best || estimated > best.estimated) best = { ...set, estimated, date: workout.date };
+    }
+  }
+  return best;
+}
+
+function renderStrengthPanel(showRecord = false) {
+  const selection = selectStrengthTracking();
+  const history = strengthHistory(ui.strengthVariation);
+  const record = showRecord ? selectedStrengthRecord(ui.strengthVariation) : null;
+  const label = selection.selected ? `${selection.selected.family}${selection.variants.length > 1 || selection.selected.variation !== 'Unspecified' ? ` · ${selection.selected.variation}` : ''}` : '';
+  return `<article class="panel strength-panel">
+    <div class="panel-header"><div><h2>Strength trend</h2><p class="panel-subtitle">Estimated one-rep max</p></div>${selection.families.length ? strengthSelectors(selection) : ''}</div>
+    <p class="panel-subtitle">${escapeHtml(label)}</p>
+    ${record ? `<div class="pr-card"><div class="pr-name">Personal record · ${escapeHtml(label)}</div><div class="pr-value">${number(record.estimated, 1)} <small>${unit()}</small></div><div class="pr-meta">${number(record.weight, 1)} ${unit()} x ${record.reps} · ${shortDate(record.date)}</div></div>` : ''}
+    <div class="chart-wrap">${history.length ? lineChart(history, ` ${unit()}`) : '<div class="empty-chart">No weighted sets logged for this variation yet.</div>'}</div>
+  </article>`;
 }
 
 function weeksData(count = 8) {
@@ -233,9 +309,6 @@ function renderDashboard() {
   const weightDelta = latest && previous ? latest.weight - previous.weight : null;
   const prs = personalRecords();
   const recentPrs = prs.filter(pr => daysBetween(now, dateFromIso(pr.date)) <= 30);
-  const exerciseNames = [...new Set(allSets().filter(set => set.weight > 0).map(set => set.exerciseName))];
-  if (!ui.strengthExercise || !exerciseNames.includes(ui.strengthExercise)) ui.strengthExercise = exerciseNames[0] || '';
-  const history = ui.strengthExercise ? strengthHistory(ui.strengthExercise) : [];
   const latestSessions = [...state.workouts].sort((a, b) => b.date.localeCompare(a.date)).slice(0, 5);
   const greetingHour = new Date().getHours();
   const greeting = greetingHour < 12 ? 'Good morning' : greetingHour < 18 ? 'Good afternoon' : 'Good evening';
@@ -248,12 +321,7 @@ function renderDashboard() {
       ${statCard('Current records', number(prs.length), recentPrs.length ? `<span class="trend-up">${recentPrs.length} set in the last 30 days</span>` : 'Keep building the baseline', 'PR', 'acid')}
     </section>
     <section class="dashboard-grid">
-      <article class="panel">
-        <div class="panel-header"><div><h2>Strength trend</h2><p class="panel-subtitle">Estimated one-rep max</p></div>
-          ${exerciseNames.length ? `<select class="select-compact" id="strength-exercise" aria-label="Strength chart exercise">${exerciseNames.map(name => `<option ${name === ui.strengthExercise ? 'selected' : ''}>${escapeHtml(name)}</option>`).join('')}</select>` : ''}
-        </div>
-        <div class="chart-wrap">${history.length ? lineChart(history, ` ${unit()}`) : `<div class="empty-chart">Log weighted sets to build your strength chart.</div>`}</div>
-      </article>
+      ${renderStrengthPanel()}
       <article class="panel"><div class="panel-header"><div><h2>Weekly volume</h2><p class="panel-subtitle">Last eight weeks, ${unit()}</p></div></div>${barChart(weeksData(8))}</article>
     </section>
     <section class="dashboard-grid">
@@ -415,7 +483,6 @@ async function pollRecommendations(attempt = 0) {
 
 function renderProgress() {
   const records = personalRecords();
-  const topRecords = records.filter(item => item.weight > 0);
   const weeks = weeksData(12);
   const maxSessions = Math.max(...weeks.map(week => week.sessions), 1);
   const totalVolume = state.workouts.reduce((sum, workout) => sum + workoutVolume(workout), 0);
@@ -427,9 +494,7 @@ function renderProgress() {
       ${statCard('Exercise records', number(records.length), 'Estimated one-rep max leaders', 'PR', 'coral')}
       ${statCard('Last 12 weeks', `${number(weeks.reduce((sum, week) => sum + week.sessions, 0))}`, 'Completed sessions', '12W', 'acid')}
     </section>
-    <article class="panel"><div class="panel-header"><div><h2>Personal records</h2><p class="panel-subtitle">Best estimated one-rep max by movement</p></div></div>
-      ${topRecords.length ? `<div class="pr-scroll"><div class="pr-grid">${topRecords.map(record => `<div class="pr-card"><div class="pr-name">${escapeHtml(record.exerciseName)}</div><div class="pr-value">${number(record.estimated, 1)} <small>${unit()}</small></div><div class="pr-meta">${number(record.weight, 1)} ${unit()} x ${record.reps} · ${shortDate(record.date)}</div></div>`).join('')}</div></div>` : emptyState('No records yet', 'Weighted working sets will populate your personal records.')}
-    </article>
+    ${renderStrengthPanel(true)}
     ${renderRecommendations()}
     <section class="dashboard-grid">
       <article class="panel"><div class="panel-header"><div><h2>Training consistency</h2><p class="panel-subtitle">Sessions per week</p></div></div><div class="consistency-grid">${weeks.map(week => `<div class="week-column"><span class="bar-value">${week.sessions || ''}</span><div class="week-bar" style="height:${week.sessions / maxSessions * 100}%"></div><span class="week-label">${escapeHtml(week.label)}</span></div>`).join('')}</div></article>
@@ -993,7 +1058,8 @@ document.addEventListener('input', event => {
 });
 
 document.addEventListener('change', event => {
-  if (event.target.id === 'strength-exercise') { ui.strengthExercise = event.target.value; render(); }
+  if (event.target.id === 'strength-exercise') { ui.strengthExercise = event.target.value; ui.strengthVariation = ''; render(); }
+  if (event.target.id === 'strength-variation') { ui.strengthVariation = event.target.value; ui.strengthSelections[ui.strengthExercise] = ui.strengthVariation; render(); }
   if (event.target.id === 'muscle-filter') { ui.exerciseMuscle = event.target.value; render(); }
   for (const group of BODY_TREND_GROUPS) {
     if (event.target.id === group.id) { ui[group.stateKey] = event.target.value; render(); }

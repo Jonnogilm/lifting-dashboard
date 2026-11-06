@@ -1,0 +1,70 @@
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const vm = require('node:vm');
+
+function tracking() {
+  const source = fs.readFileSync(require.resolve('../public/app.js'), 'utf8');
+  const context = vm.createContext({ document: { querySelector: () => ({}) }, location: { hash: '' } });
+  vm.runInContext(source.slice(0, source.indexOf('function weeksData(')), context);
+  vm.runInContext(`
+    function lineChart(points) { return JSON.stringify(points); }
+    state = {
+      settings: { weightUnit: 'lb' },
+      exercises: [
+        { id: 'base', name: 'Incline Bench Press', family: 'Incline Bench Press' },
+        { id: '15', name: 'Incline Bench Press (15°)', family: 'Incline Bench Press', variation: '15°' },
+        { id: '30', name: 'Incline Bench Press (30°)', family: 'Incline Bench Press', variation: '30°' },
+        { id: '45', name: 'Incline Bench Press (45°)', family: 'Incline Bench Press', variation: '45°' },
+        { id: 'row', name: 'Row' }
+      ],
+      workouts: [
+        { date: '2026-11-01', exercises: [{ exerciseId: 'base', name: 'Incline Bench Press', sets: [{ weight: 80, reps: 6 }] }] },
+        { date: '2026-11-02', exercises: [{ exerciseId: '15', name: 'Old incline name', sets: [{ weight: 100, reps: 6 }, { weight: 999, reps: 6, completed: false }] }] },
+        { date: '2026-11-03', exercises: [{ exerciseId: '30', name: 'Incline Bench Press (30°)', sets: [{ weight: 50, reps: 6 }] }] }
+      ]
+    };
+  `, context);
+  return code => vm.runInContext(code, context);
+}
+
+test('primary selector contains each family once and secondary selector includes unlogged variants', () => {
+  const run = tracking();
+  const html = run('strengthSelectors(selectStrengthTracking())');
+  const primary = html.split('id="strength-exercise">')[1].split('</select>')[0];
+  assert.equal((primary.match(/<option /g) || []).length, 2);
+  assert.ok(!primary.includes('15°'));
+  assert.ok(html.includes('15°'));
+  assert.ok(html.includes('30°'));
+  assert.ok(html.includes('45°'));
+  assert.ok(html.includes('Unspecified'));
+});
+
+test('graphs and personal records filter by variant ID, excluding incomplete sets', () => {
+  const run = tracking();
+  assert.equal(run("strengthHistory('15')[0].value"), 120);
+  assert.equal(run("strengthHistory('30')[0].value"), 60);
+  assert.equal(run("strengthHistory('base')[0].value"), 96);
+  assert.equal(run("selectedStrengthRecord('15').weight"), 100);
+  assert.equal(run("strengthHistory('45').length"), 0);
+  run("ui.strengthExercise = 'Incline Bench Press'; ui.strengthVariation = '45';");
+  const html = run('renderStrengthPanel(true)');
+  assert.match(html, /No weighted sets logged for this variation yet/);
+  assert.ok(!html.includes('Personal record ·'));
+});
+
+test('selection is preserved across renders and family changes', () => {
+  const run = tracking();
+  run("ui.strengthExercise = 'Incline Bench Press'; ui.strengthVariation = '15'; selectStrengthTracking();");
+  assert.match(run('renderStrengthPanel(true)'), /Personal record · Incline Bench Press · 15°/);
+  run("ui.strengthExercise = 'Row'; ui.strengthVariation = ''; selectStrengthTracking();");
+  run("ui.strengthExercise = 'Incline Bench Press'; ui.strengthVariation = ''; selectStrengthTracking();");
+  assert.equal(run('ui.strengthVariation'), '15');
+});
+
+test('deleted catalog entries retain their saved family and independent history', () => {
+  const run = tracking();
+  run("state.exercises = state.exercises.filter(e => e.id !== '30'); state.workouts[2].exercises[0].family = 'Incline Bench Press'; state.workouts[2].exercises[0].variation = '30°';");
+  assert.equal(run("strengthOptions().find(e => e.key === '30').family"), 'Incline Bench Press');
+  assert.equal(run("strengthHistory('30')[0].value"), 60);
+});
