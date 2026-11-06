@@ -19,7 +19,8 @@ const ui = {
   recommendations: null,
   initialDraftChecked: false,
   exercisePickerQuery: '',
-  templateQuery: ''
+  templateQuery: '',
+  savingVariation: false
 };
 
 let state = null;
@@ -184,9 +185,24 @@ function renderStrengthPanel(showRecord = false) {
   return `<article class="panel strength-panel">
     <div class="panel-header"><div><h2>Strength trend</h2><p class="panel-subtitle">Estimated one-rep max</p></div>${selection.families.length ? strengthSelectors(selection) : ''}</div>
     <p class="panel-subtitle">${escapeHtml(label)}</p>
+    ${state.exercises.some(e => e.id === selection.selected?.key) ? `<button class="link-button" data-action="add-variation" data-id="${escapeHtml(selection.selected.key)}">+ Add variation</button>` : ''}
     ${record ? `<div class="pr-card"><div class="pr-name">Personal record · ${escapeHtml(label)}</div><div class="pr-value">${number(record.estimated, 1)} <small>${unit()}</small></div><div class="pr-meta">${number(record.weight, 1)} ${unit()} x ${record.reps} · ${shortDate(record.date)}</div></div>` : ''}
     <div class="chart-wrap">${history.length ? lineChart(history, ` ${unit()}`) : '<div class="empty-chart">No weighted sets logged for this variation yet.</div>'}</div>
   </article>`;
+}
+
+function variationPayload(exercise, label) {
+  const variation = String(label || '').trim().replace(/\s+/g, ' ');
+  if (!variation) throw new Error('Enter a variation, such as 45° or Single arm.');
+  const family = exercise.family || exercise.name;
+  const name = `${family} (${variation})`;
+  if (name.length > 100) throw new Error('Use a shorter variation name.');
+  const comparable = value => String(value || '').trim().replace(/\s+/g, ' ').toLowerCase();
+  if (state.exercises.some(e => (e.family || e.name) === family &&
+    (comparable(e.variation) === comparable(variation) || comparable(e.name) === comparable(name)))) {
+    throw new Error('That variation already exists for this exercise.');
+  }
+  return { name, family, variation, muscle: exercise.muscle, equipment: exercise.equipment, targets: [...(exercise.targets || [])] };
 }
 
 function weeksData(count = 8) {
@@ -371,6 +387,7 @@ function renderExercises() {
       const sessions = state.workouts.filter(workout => workout.exercises.some(item => item.name === exercise.name)).length;
       return `<article class="exercise-card"><div class="exercise-card-top"><div><h3>${escapeHtml(familyName(exercise))}</h3><p class="exercise-meta">${escapeHtml(exercise.muscle)} · ${escapeHtml(exercise.equipment)}</p></div><span class="exercise-monogram">${escapeHtml(exercise.name.split(/\s+/).map(word => word[0]).slice(0, 2).join(''))}</span></div>
         <div class="field"><label>Variation<select data-library-variation="${exercise.id}">${state.exercises.filter(e => familyName(e) === familyName(exercise)).map(e => `<option value="${e.id}">${escapeHtml(e.variation || (e.name === familyName(e) ? 'Unspecified' : e.name))}</option>`).join('')}</select></label></div>
+        <button class="link-button" data-action="add-variation" data-id="${exercise.id}">+ Add variation</button>
         ${exercise.targets?.length ? '' : '<p class="muted">Muscle targets need review.</p>'}
         <div class="exercise-record"><span><span class="muted">Best e1RM</span><br><strong>${record && record.weight > 0 ? `${number(record.estimated, 1)} ${unit()}` : '--'}</strong></span><span><span class="muted">Sessions</span><br><strong>${sessions}</strong></span><button class="link-button" data-action="edit-exercise" data-id="${exercise.id}">Edit</button><button class="link-button danger" data-action="delete-exercise" data-id="${exercise.id}" aria-label="Delete ${escapeHtml(exercise.name)}">Delete</button></div></article>`;
     }).join('')}</div>` : emptyState('No matching exercises', 'Adjust your search or add a custom movement.')}`;
@@ -932,6 +949,41 @@ async function saveGoal() {
   } catch (error) { toast(error.message, 'error'); }
 }
 
+function openVariationModal(exercise) {
+  if (!exercise) return;
+  const family = familyName(exercise);
+  const existing = state.exercises.filter(e => familyName(e) === family).map(e => e.variation).filter(Boolean);
+  const presets = /incline|bench/i.test(family) ? ['15°', '30°', '45°', '60°'] : ['Single arm', 'Double arm', 'Single leg', 'Double leg'];
+  openModal('Add variation', `<form id="variation-form" data-parent-id="${escapeHtml(exercise.id)}">
+    <p>For <strong>${escapeHtml(family)}</strong></p>
+    <div class="field"><label for="new-variation-name">Variation name</label><input id="new-variation-name" name="variation" required maxlength="${Math.max(1, 97 - family.length)}" placeholder="e.g. 45° or Single arm" autocomplete="off"></div>
+    <div class="variation-presets">${presets.filter(label => !existing.some(value => value.toLowerCase() === label.toLowerCase())).map(label => `<button class="button small" type="button" data-action="variation-preset" data-value="${escapeHtml(label)}">${escapeHtml(label)}</button>`).join('')}</div>
+    <p class="muted">Uses the same equipment and muscle targets. You can edit these later.</p>
+    ${existing.length ? `<p class="muted">Existing variations: ${existing.map(escapeHtml).join(', ')}</p>` : ''}
+  </form>`, { footer: '<button class="button" data-action="close-modal">Cancel</button><button class="button primary" type="submit" form="variation-form" id="save-variation-button">Add variation</button>' });
+}
+
+async function saveVariation() {
+  const form = document.querySelector('#variation-form');
+  if (!form || ui.savingVariation || !form.reportValidity()) return;
+  const parent = state.exercises.find(e => e.id === form.dataset.parentId);
+  if (!parent) return toast('The original exercise is no longer available.', 'error');
+  const button = document.querySelector('#save-variation-button');
+  try {
+    const payload = variationPayload(parent, form.elements.variation.value);
+    ui.savingVariation = true;
+    button.disabled = true;
+    const created = await api('/api/exercises', { method: 'POST', body: JSON.stringify(payload) });
+    ui.strengthExercise = created.family;
+    ui.strengthVariation = created.id;
+    ui.strengthSelections[created.family] = created.id;
+    closeModal();
+    await refresh();
+    toast(`${created.variation} added to ${created.family}.`);
+  } catch (error) { toast(error.message, 'error'); }
+  finally { ui.savingVariation = false; button.disabled = false; }
+}
+
 function openExerciseModal(exercise = null) {
   const muscles = ['Chest', 'Back', 'Shoulders', 'Legs', 'Quads', 'Hamstrings', 'Glutes', 'Arms', 'Calves', 'Core', 'Other'];
   const equipment = ['Barbell', 'Dumbbell', 'Cable', 'Machine', 'Bodyweight', 'Kettlebell', 'Other'];
@@ -977,6 +1029,8 @@ document.addEventListener('click', async event => {
   if (action === 'new-goal') openGoalModal();
   if (action === 'edit-goal') openGoalModal(state.goals.find(item => item.id === target.dataset.id));
   if (action === 'delete-goal') deleteRecord('goals', target.dataset.id, 'Delete this goal?');
+  if (action === 'add-variation') openVariationModal(state.exercises.find(e => e.id === target.dataset.id));
+  if (action === 'variation-preset') { const input = document.querySelector('#new-variation-name'); if (input) { input.value = target.dataset.value; input.focus(); } }
   if (action === 'edit-exercise') openExerciseModal(state.exercises.find(e => e.id === target.dataset.id));
   if (action === 'new-exercise') openExerciseModal();
   if (action === 'delete-exercise') {
@@ -1079,6 +1133,7 @@ document.addEventListener('change', event => {
 });
 
 document.addEventListener('submit', async event => {
+  if (event.target.id === 'variation-form') { event.preventDefault(); await saveVariation(); return; }
   if (event.target.id !== 'settings-form') return;
   event.preventDefault();
   try {

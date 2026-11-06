@@ -305,8 +305,9 @@ Tailscale Serve is intentionally private and requires the connecting device to j
 ## Exercise variations and measurement entry
 
 Exercises can share a **Family** while keeping distinct names and variation labels.
-Use **Exercises → Edit** to link existing entries, or **Add exercise** with the same
-family to add an angle, single/double arm option, or equipment variation. Incline
+Use **+ Add variation** on an exercise card or strength chart, then enter a name
+or choose a preset. The family, equipment, and muscle targets are copied automatically.
+Use **Exercises → Edit** to link existing entries or adjust a variation’s details. Incline
 bench starts with 15° and 30°. Historical sets without an angle stay Unspecified.
 Each variation retains separate records, goals, and previous-set suggestions.
 

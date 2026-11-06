@@ -356,3 +356,5 @@ h3 { margin-bottom: 0; font-size: 14px; letter-spacing: 0; }
   .strength-selectors label { flex: 1 1 140px; }
   .strength-selectors .select-compact { max-width: none; }
 }
+
+.variation-presets { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0; }

@@ -68,3 +68,39 @@ test('deleted catalog entries retain their saved family and independent history'
   assert.equal(run("strengthOptions().find(e => e.key === '30').family"), 'Incline Bench Press');
   assert.equal(run("strengthHistory('30')[0].value"), 60);
 });
+
+test('quick variations inherit metadata without copying the original ID or modifying it', () => {
+  const run = tracking();
+  run("state.exercises[1].muscle = 'Chest'; state.exercises[1].equipment = 'Barbell'; state.exercises[1].targets = ['chest-upper'];");
+  const payload = JSON.parse(run("JSON.stringify(variationPayload(state.exercises[1], '  60°  '))"));
+  assert.deepEqual(payload, {
+    name: 'Incline Bench Press (60°)', family: 'Incline Bench Press', variation: '60°',
+    muscle: 'Chest', equipment: 'Barbell', targets: ['chest-upper']
+  });
+  run("variationPayload(state.exercises[1], '60°').targets.push('biceps');");
+  assert.equal(run('state.exercises[1].targets.length'), 1);
+  assert.equal(run('state.exercises[1].variation'), '15°');
+});
+
+test('quick variation rejects empty, duplicate and overlong names', () => {
+  const run = tracking();
+  assert.throws(() => run("variationPayload(state.exercises[0], '  ')"), /Enter a variation/);
+  assert.throws(() => run("variationPayload(state.exercises[0], '  15° ' )"), /already exists/);
+  assert.throws(() => run("variationPayload(state.exercises[0], 'a'.repeat(100))"), /shorter variation/);
+  run("state.exercises.push({ id: 'single', name: 'Row (Single arm)', family: 'Row', variation: 'Single arm' });");
+  assert.throws(() => run("variationPayload(state.exercises[4], ' SINGLE   ARM ')"), /already exists/);
+});
+
+test('quick variation dialog presents one name field with inherited context and angle presets', () => {
+  const run = tracking();
+  const source = fs.readFileSync(require.resolve('../public/app.js'), 'utf8');
+  run(source.slice(source.indexOf('function openVariationModal('), source.indexOf('function openExerciseModal(')));
+  run('let dialog; function familyName(e) { return e.family || e.name; } function openModal(title, body, options) { dialog = { title, body, options }; }');
+  run('openVariationModal(state.exercises[1]);');
+  const body = run('dialog.body');
+  assert.match(body, /For <strong>Incline Bench Press<\/strong>/);
+  assert.equal((body.match(/<input /g) || []).length, 1);
+  assert.match(body, /data-action="variation-preset" data-value="60°"/);
+  assert.ok(!body.includes('data-value="15°"'));
+  assert.match(run('dialog.options.footer'), /form="variation-form"/);
+});
