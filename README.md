@@ -301,3 +301,22 @@ These can be added as `Environment=` entries in `/etc/systemd/system/ironlog.ser
 ## Public access
 
 Tailscale Serve is intentionally private and requires the connecting device to join your Tailscale network. Do not use Tailscale Funnel or direct router port forwarding for the current IronLog build because it has no application-level authentication. A genuinely public deployment should first add authentication and then use an authenticated reverse proxy or access gateway.
+
+## Exercise variations and measurement entry
+
+Exercises can share a **Family** while keeping distinct names and variation labels.
+Use **Exercises → Edit** to link existing entries, or **Add exercise** with the same
+family to add an angle, single/double arm option, or equipment variation. Incline
+bench starts with 15° and 30°. Historical sets without an angle stay Unspecified.
+Each variation retains separate records, goals, and previous-set suggestions.
+
+Dips use check-in bodyweight plus added load. For old dip sets, confirm the load
+components when editing; historical weights are not reinterpreted automatically.
+
+The check-in form accepts centimeters or inches independently of display settings.
+Circumferences are stored in inches. Schema version 3 migrates existing cm data
+once and creates a backup before migrating the on-disk database.
+
+Recommendations use logged performance and exercise muscle targets. Review
+exercises marked **Muscle targets need review** in the library. Ollama rewrites
+the resulting findings; logging workouts does not train or fine-tune the model.

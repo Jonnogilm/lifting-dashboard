@@ -28,7 +28,7 @@ test('serves the application and creates an empty database', async () => {
   assert.match(await page.text(), /IRONLOG/);
 
   const state = await fetch(`${baseUrl}/api/state`).then(response => response.json());
-  assert.equal(state.version, 2);
+  assert.equal(state.version, 3);
   assert.ok(state.exercises.length > 20);
   assert.deepEqual(state.workouts, []);
 });
@@ -102,7 +102,7 @@ test('migrates RPE and bodyweight exercise loads to schema version 2', () => {
     goals: []
   });
   const exercise = migrated.workouts[0].exercises[0];
-  assert.equal(migrated.version, 2);
+  assert.equal(migrated.version, 3);
   assert.equal(exercise.bodyweight, 160);
   assert.equal(exercise.sets[0].addedWeight, 0);
   assert.equal(exercise.sets[0].weight, 160);

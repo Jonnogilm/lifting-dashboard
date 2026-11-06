@@ -33,16 +33,41 @@ const exerciseCatalog = [
   ['Skull Crusher', 'Arms', 'Barbell']
 ].map(([name, muscle, equipment]) => ({ id: randomUUID(), name, muscle, equipment, targets: TARGETS[name] || [], builtIn: true }));
 
+
+const LENGTH_FIELDS = ['waist', 'chest', 'neck', 'leftArm', 'rightArm', 'hips', 'leftThigh', 'rightThigh'];
+function inferredTargets(name) {
+  if (TARGETS[name]) return TARGETS[name];
+  const n = String(name).toLowerCase();
+  if (/curl/.test(n) && !/leg/.test(n)) return ['biceps'];
+  if (/calf/.test(n)) return ['calves'];
+  if (/lateral raise/.test(n)) return ['shoulders-side'];
+  if (/tricep.*ov|overhead tricep/.test(n)) return ['triceps-long'];
+  if (/leg extension/.test(n)) return ['quads'];
+  if (/leg curl/.test(n)) return ['hamstrings'];
+  if (/incline bench/.test(n)) return TARGETS['Incline Bench Press'];
+  return [];
+}
+function normalizeExercise(body, existing = {}) {
+  const name = cleanText(body.name, 100);
+  if (!name) throw Object.assign(new Error('Exercise name is required'), { status: 400 });
+  const allowed = new Set(Object.values(TARGETS).flat().concat(['hip-adductors', 'hip-abductors']));
+  return { ...existing, id: existing.id || randomUUID(), name,
+    muscle: cleanText(body.muscle, 60) || 'Other', equipment: cleanText(body.equipment, 60) || 'Other',
+    family: cleanText(body.family, 100) || name, variation: cleanText(body.variation, 100),
+    targets: Array.isArray(body.targets) ? [...new Set(body.targets.filter(t => allowed.has(t)))] : inferredTargets(name),
+    builtIn: existing.builtIn || false };
+}
+
 function emptyDatabase() {
   return {
-    version: 2,
+    version: 3,
     settings: {
       athleteName: 'Athlete',
       weightUnit: 'lb',
       measurementUnit: 'in',
       weekStartsOn: 'monday'
     },
-    exercises: exerciseCatalog,
+    exercises: [...exerciseCatalog, ...['15°', '30°'].map(angle => ({ ...exerciseCatalog.find(e => e.name === 'Incline Bench Press'), id: randomUUID(), name: `Incline Bench Press (${angle})`, family: 'Incline Bench Press', variation: angle, builtIn: false }))],
     deletedExercises: [],
     workouts: [],
     measurements: [],
@@ -63,12 +88,12 @@ async function ensureDatabase() {
   }
   const raw = await fsp.readFile(DATA_FILE, 'utf8');
   const parsed = JSON.parse(raw);
-  if (Number(parsed?.version || 1) < 2) {
+  if (Number(parsed?.version || 1) < 3) {
     const stamp = new Date().toISOString().replaceAll(':', '-').replaceAll('.', '-');
-    const backup = path.join(path.dirname(DATA_FILE), `${path.basename(DATA_FILE, '.json')}.v1-${stamp}.json`);
+    const backup = path.join(path.dirname(DATA_FILE), `${path.basename(DATA_FILE, '.json')}.v${parsed.version || 1}-${stamp}.json`);
     await fsp.copyFile(DATA_FILE, backup, fs.constants.COPYFILE_EXCL);
     await saveDatabase(normalizeDatabase(parsed));
-    console.log(`Database migrated to version 2. Backup: ${backup}`);
+    console.log(`Database migrated to version 3. Backup: ${backup}`);
   }
 }
 
@@ -112,22 +137,36 @@ function normalizeDatabase(value) {
   const byName = new Map(suppliedExercises.map(item => [item.name, item]));
   const exercises = suppliedExercises.map(item => ({
     ...item,
-    targets: Array.isArray(item.targets) && item.targets.length ? item.targets : (TARGETS[item.name] || [])
+    targets: Array.isArray(item.targets) && item.targets.length ? item.targets : inferredTargets(item.name),
+    family: cleanText(item.family, 100) || item.name,
+    variation: cleanText(item.variation, 100)
   }));
   for (const builtIn of exerciseCatalog) {
     if (!byName.has(builtIn.name) && !deletedExerciseNames.has(builtIn.name)) exercises.push(builtIn);
+  }
+  const incline = exercises.find(item => item.name === 'Incline Bench Press');
+  if (incline && Number(value.version || 1) < 3) {
+    incline.family = incline.name;
+    for (const angle of ['15°', '30°']) {
+      const name = `${incline.name} (${angle})`;
+      if (!exercises.some(item => item.name === name)) exercises.push({ ...incline, id: randomUUID(), name, variation: angle, builtIn: false });
+    }
   }
   const workouts = [];
   for (const workout of Array.isArray(value.workouts) ? value.workouts : []) {
     try { workouts.push(normalizeWorkout(workout, workout)); } catch (error) { console.warn(`Skipping invalid stored workout: ${error.message}`); }
   }
   return {
-    version: 2,
+    version: 3,
     settings: { ...fallback.settings, ...(value.settings || {}) },
     exercises,
     deletedExercises,
     workouts,
-    measurements: Array.isArray(value.measurements) ? value.measurements : [],
+    measurements: (Array.isArray(value.measurements) ? value.measurements : []).map(item => {
+      const result = { ...item };
+      if (Number(value.version || 1) < 3 && value.settings?.measurementUnit === 'cm') for (const field of LENGTH_FIELDS) if (result[field] != null) result[field] /= 2.54;
+      return result;
+    }),
     goals: Array.isArray(value.goals) ? value.goals : [],
     recommendations: value.recommendations && typeof value.recommendations === 'object' ? value.recommendations : null
   };
@@ -181,7 +220,7 @@ function normalizeWorkout(input, existing = {}) {
   }
   const normalizedExercises = exercises.map(item => {
     const name = cleanText(item.name, 100) || 'Exercise';
-    const trackedBodyweight = isTrackedBodyweight(name);
+    const trackedBodyweight = isTrackedBodyweight(name) && !((/^dips?$/i.test(name)) && item.sets?.some(set => set.bodyweight == null && item.bodyweight == null));
     const itemBodyweight = Math.max(0, finiteNumber(item.bodyweight, 0));
     const sets = (Array.isArray(item.sets) ? item.sets : []).map(set => {
       const base = {
@@ -204,6 +243,8 @@ function normalizeWorkout(input, existing = {}) {
       id: item.id || randomUUID(),
       exerciseId: cleanText(item.exerciseId, 80),
       name,
+      family: cleanText(item.family, 100),
+      variation: cleanText(item.variation, 100),
       ...(trackedBodyweight ? { bodyweight: sets[0]?.bodyweight ?? itemBodyweight } : {}),
       sets
     };
@@ -238,6 +279,7 @@ function normalizeMeasurement(input, existing = {}) {
     createdAt: existing.createdAt || new Date().toISOString()
   };
   for (const field of fields) result[field] = finiteNumber(input[field]);
+  if (input.inputUnit === 'cm') for (const field of LENGTH_FIELDS) if (result[field] != null) result[field] /= 2.54;
   return result;
 }
 
@@ -449,11 +491,11 @@ async function handleApi(req, res, pathname) {
     const index = findIndexOrThrow(db.workouts, pathname.split('/').pop());
     [result] = db.workouts.splice(index, 1);
   } else if (method === 'POST' && pathname === '/api/measurements') {
-    result = normalizeMeasurement(body);
+    result = normalizeMeasurement({ ...body, inputUnit: body.inputUnit || db.settings.measurementUnit });
     db.measurements.push(result);
   } else if (method === 'PUT' && pathname.startsWith('/api/measurements/')) {
     const index = findIndexOrThrow(db.measurements, pathname.split('/').pop());
-    result = normalizeMeasurement(body, db.measurements[index]);
+    result = normalizeMeasurement({ ...body, inputUnit: body.inputUnit || db.settings.measurementUnit }, db.measurements[index]);
     db.measurements[index] = result;
   } else if (method === 'DELETE' && pathname.startsWith('/api/measurements/')) {
     const index = findIndexOrThrow(db.measurements, pathname.split('/').pop());
@@ -471,9 +513,22 @@ async function handleApi(req, res, pathname) {
   } else if (method === 'POST' && pathname === '/api/exercises') {
     const name = cleanText(body.name, 100);
     if (!name) throw Object.assign(new Error('Exercise name is required'), { status: 400 });
-    result = { id: randomUUID(), name, muscle: cleanText(body.muscle, 60) || 'Other', equipment: cleanText(body.equipment, 60) || 'Other', builtIn: false };
+    result = normalizeExercise(body);
+    if (!result.targets.length) result.targets = db.exercises.find(e => (e.family || e.name) === result.family && e.targets?.length)?.targets || inferredTargets(result.name);
+    queueRecommendation = true;
     db.exercises.push(result);
+  } else if (method === 'PUT' && pathname.startsWith('/api/exercises/')) {
+    const index = findIndexOrThrow(db.exercises, pathname.split('/').pop());
+    result = normalizeExercise(body, db.exercises[index]);
+    const oldName = db.exercises[index].name;
+    db.exercises[index] = result;
+    for (const workout of db.workouts) for (const entry of workout.exercises) if (entry.exerciseId === result.id) {
+      entry.name = result.name; entry.family = result.family; entry.variation = result.variation;
+    }
+    for (const goal of db.goals) if (goal.exerciseName === oldName) goal.exerciseName = result.name;
+    queueRecommendation = true;
   } else if (method === 'DELETE' && pathname.startsWith('/api/exercises/')) {
+    queueRecommendation = true;
     const index = findIndexOrThrow(db.exercises, pathname.split('/').pop());
     [result] = db.exercises.splice(index, 1);
     if (result.builtIn && !db.deletedExercises.includes(result.name)) db.deletedExercises.push(result.name);
@@ -493,13 +548,6 @@ async function handleApi(req, res, pathname) {
         goal.start = convert(goal.start);
         goal.target = convert(goal.target);
       });
-    }
-    if (nextMeasurementUnit !== db.settings.measurementUnit) {
-      const factor = nextMeasurementUnit === 'cm' ? 2.54 : 1 / 2.54;
-      const fields = ['waist', 'chest', 'neck', 'leftArm', 'rightArm', 'hips', 'leftThigh', 'rightThigh'];
-      db.measurements.forEach(measurement => fields.forEach(field => {
-        if (measurement[field] != null) measurement[field] = Math.round(measurement[field] * factor * 1000) / 1000;
-      }));
     }
     db.settings = {
       athleteName: cleanText(body.athleteName, 80) || 'Athlete',

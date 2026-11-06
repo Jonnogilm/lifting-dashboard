@@ -1,5 +1,6 @@
 const app = document.querySelector('#app');
 const modalRoot = document.querySelector('#modal-root');
+const LENGTH_FIELDS = ['waist', 'chest', 'neck', 'leftArm', 'rightArm', 'hips', 'leftThigh', 'rightThigh'];
 const DRAFT_KEY = 'ironlog-workout-draft-v2';
 const toastRoot = document.querySelector('#toast-root');
 
@@ -56,6 +57,7 @@ async function api(path, options = {}) {
 
 async function refresh() {
   state = await api('/api/state');
+  if (state.settings.measurementUnit === 'cm') for (const item of state.measurements) for (const field of LENGTH_FIELDS) if (item[field] != null) item[field] *= 2.54;
   render();
   refreshRecommendations(false).catch(() => {});
   if (!ui.initialDraftChecked) {
@@ -289,18 +291,20 @@ function renderWorkouts() {
 function renderExercises() {
   const muscles = ['All', ...new Set(state.exercises.map(item => item.muscle).sort())];
   const records = new Map(personalRecords().map(record => [record.exerciseName, record]));
-  const exercises = state.exercises.filter(exercise =>
+  const exercises = groupedExercises(state.exercises.filter(exercise =>
     (ui.exerciseMuscle === 'All' || exercise.muscle === ui.exerciseMuscle) &&
     (!ui.exerciseSearch || `${exercise.name} ${exercise.muscle} ${exercise.equipment}`.toLowerCase().includes(ui.exerciseSearch.toLowerCase()))
-  );
+  ));
   return `${pageHeader('Movement library', 'Exercises', `<button class="button primary" data-action="new-exercise">+ Add exercise</button>`)}
     <div class="toolbar"><div class="search-field"><input id="exercise-search" type="search" value="${escapeHtml(ui.exerciseSearch)}" placeholder="Search exercises" aria-label="Search exercises"></div>
       <select class="select-compact" id="muscle-filter" aria-label="Filter by muscle group">${muscles.map(muscle => `<option ${muscle === ui.exerciseMuscle ? 'selected' : ''}>${escapeHtml(muscle)}</option>`).join('')}</select></div>
     ${exercises.length ? `<div class="exercise-grid">${exercises.map(exercise => {
       const record = records.get(exercise.name);
       const sessions = state.workouts.filter(workout => workout.exercises.some(item => item.name === exercise.name)).length;
-      return `<article class="exercise-card"><div class="exercise-card-top"><div><h3>${escapeHtml(exercise.name)}</h3><p class="exercise-meta">${escapeHtml(exercise.muscle)} · ${escapeHtml(exercise.equipment)}</p></div><span class="exercise-monogram">${escapeHtml(exercise.name.split(/\s+/).map(word => word[0]).slice(0, 2).join(''))}</span></div>
-        <div class="exercise-record"><span><span class="muted">Best e1RM</span><br><strong>${record && record.weight > 0 ? `${number(record.estimated, 1)} ${unit()}` : '--'}</strong></span><span><span class="muted">Sessions</span><br><strong>${sessions}</strong></span><button class="link-button danger" data-action="delete-exercise" data-id="${exercise.id}" aria-label="Delete ${escapeHtml(exercise.name)}">Delete</button></div></article>`;
+      return `<article class="exercise-card"><div class="exercise-card-top"><div><h3>${escapeHtml(familyName(exercise))}</h3><p class="exercise-meta">${escapeHtml(exercise.muscle)} · ${escapeHtml(exercise.equipment)}</p></div><span class="exercise-monogram">${escapeHtml(exercise.name.split(/\s+/).map(word => word[0]).slice(0, 2).join(''))}</span></div>
+        <div class="field"><label>Variation<select data-library-variation="${exercise.id}">${state.exercises.filter(e => familyName(e) === familyName(exercise)).map(e => `<option value="${e.id}">${escapeHtml(e.variation || (e.name === familyName(e) ? 'Unspecified' : e.name))}</option>`).join('')}</select></label></div>
+        ${exercise.targets?.length ? '' : '<p class="muted">Muscle targets need review.</p>'}
+        <div class="exercise-record"><span><span class="muted">Best e1RM</span><br><strong>${record && record.weight > 0 ? `${number(record.estimated, 1)} ${unit()}` : '--'}</strong></span><span><span class="muted">Sessions</span><br><strong>${sessions}</strong></span><button class="link-button" data-action="edit-exercise" data-id="${exercise.id}">Edit</button><button class="link-button danger" data-action="delete-exercise" data-id="${exercise.id}" aria-label="Delete ${escapeHtml(exercise.name)}">Delete</button></div></article>`;
     }).join('')}</div>` : emptyState('No matching exercises', 'Adjust your search or add a custom movement.')}`;
 }
 
@@ -490,7 +494,7 @@ function openModal(title, body, { wide = false, footer = '', autoFocus = true, w
 }
 
 function isTrackedBodyweightName(name) {
-  return ['pull-up', 'chin-up'].includes(String(name || '').trim().toLowerCase());
+  return ['pull-up', 'chin-up', 'dip', 'dips'].includes(String(name || '').trim().toLowerCase());
 }
 
 function latestMeasurementForDate(date) {
@@ -616,15 +620,24 @@ function renderTemplateResults() {
   </button>`).join('') : '<p class="picker-empty">No matching previous workouts.</p>';
 }
 
+function familyName(exercise) { return exercise.family || exercise.name; }
+function groupedExercises(items) {
+  const seen = new Set();
+  return items.filter(item => { const key = familyName(item); if (seen.has(key)) return false; seen.add(key); return true; });
+}
+function variationSelect(exercise, index) {
+  const members = state.exercises.filter(e => familyName(e) === familyName(exercise));
+  return `<label>Variation<select data-variation-index="${index}">${members.map(e => `<option value="${e.id}" ${e.id === exercise.id ? 'selected' : ''}>${escapeHtml(e.variation || (e.name === familyName(e) ? 'Unspecified' : e.name))}</option>`).join('')}</select></label>`;
+}
 function renderExercisePickerResults() {
   const root = document.querySelector('#exercise-picker-results');
   if (!root) return;
   const term = ui.exercisePickerQuery.trim().toLowerCase();
-  const matches = [...state.exercises]
+  const matches = groupedExercises([...state.exercises]
     .filter(exercise => !term || `${exercise.name} ${exercise.muscle} ${exercise.equipment}`.toLowerCase().includes(term))
-    .sort((a, b) => a.name.localeCompare(b.name)).slice(0, term ? 10 : 6);
+    .sort((a, b) => a.name.localeCompare(b.name))).slice(0, term ? 10 : 6);
   root.innerHTML = matches.length ? matches.map(exercise => `<button type="button" role="option" data-action="choose-workout-exercise" data-id="${exercise.id}">
-    <strong>${escapeHtml(exercise.name)}</strong><span>${escapeHtml(exercise.muscle)} - ${escapeHtml(exercise.equipment)}</span>
+    <strong>${escapeHtml(familyName(exercise))}</strong><span>${escapeHtml(exercise.muscle)} - ${escapeHtml(exercise.equipment)}</span>
   </button>`).join('') : '<p class="picker-empty">No matching exercises.</p>';
 }
 
@@ -635,6 +648,7 @@ function createExerciseDraft(exercise) {
     const addedWeight = previous?.addedWeight ?? 0;
     return {
       exerciseId: exercise.id,
+      family: familyName(exercise), variation: exercise.variation || '',
       name: exercise.name,
       bodyweight,
       _suggestedFields: bodyweight === '' ? [] : ['bodyweight'],
@@ -650,6 +664,7 @@ function createExerciseDraft(exercise) {
   }
   return {
     exerciseId: exercise.id,
+    family: familyName(exercise), variation: exercise.variation || '',
     name: exercise.name,
     sets: [{
       weight: previous?.weight ?? '',
@@ -698,7 +713,9 @@ function renderWorkoutEntries() {
     const tracked = isTrackedBodyweightName(exercise.name);
     const bodySuggested = exercise._suggestedFields?.includes('bodyweight') ? 'suggested-value' : '';
     return `<section class="exercise-entry" data-exercise-index="${exerciseIndex}">
-      <div class="exercise-entry-header"><h3>${escapeHtml(exercise.name)}</h3><button class="link-button danger" data-action="remove-workout-exercise" data-exercise="${exerciseIndex}">Remove</button></div>
+      <div class="exercise-entry-header"><h3>${escapeHtml(exercise.family || exercise.name)}</h3><button class="link-button danger" data-action="remove-workout-exercise" data-exercise="${exerciseIndex}">Remove</button></div>
+      ${variationSelect(state.exercises.find(e => e.id === exercise.exerciseId) || { id: exercise.exerciseId, name: exercise.name }, exerciseIndex)}
+      ${tracked && exercise.sets.some(set => set.bodyweight == null) ? '<p class="muted">Legacy load: confirm bodyweight and added weight before saving.</p>' : ''}
       ${tracked ? `<div class="bodyweight-input"><label>Bodyweight from check-in (${unit()})</label><input class="${bodySuggested}" aria-label="${escapeHtml(exercise.name)} bodyweight" type="number" inputmode="decimal" min="0" step="any" value="${escapeHtml(exercise.bodyweight ?? '')}" data-exercise-bodyweight="${exerciseIndex}"><small>Enter manually if no earlier check-in exists.</small></div>` : ''}
       <div class="sets-header"><span>Set</span><span>${tracked ? `Added (${unit()})` : `Weight (${unit()})`}</span><span>Reps</span><span></span></div>
       <div>${exercise.sets.map((set, setIndex) => {
@@ -780,6 +797,7 @@ async function saveWorkout() {
     sets: exercise.sets.filter(set => Number(set.reps) > 0)
   })).filter(exercise => exercise.sets.length);
   if (!ui.workoutDraft.date || !validExercises.length) return toast('Add a date and at least one completed set.', 'error');
+  if (validExercises.some(e => /^dips?$/i.test(e.name) && (e.bodyweight === '' || e.bodyweight == null))) return toast('Enter bodyweight for dips and confirm the added load.', 'error');
   const payload = { ...ui.workoutDraft, exercises: validExercises };
   try {
     await api(ui.workoutDraft.id ? `/api/workouts/${ui.workoutDraft.id}` : '/api/workouts', { method: ui.workoutDraft.id ? 'PUT' : 'POST', body: JSON.stringify(payload) });
@@ -791,19 +809,25 @@ async function saveWorkout() {
 }
 
 function openMeasurementModal(measurement = null) {
-  const value = key => escapeHtml(measurement?.[key] ?? '');
+  const inputUnit = localStorage.getItem('ironlog-measurement-input') || 'in';
+  const value = key => {
+    let n = measurement?.[key];
+    if (n != null && LENGTH_FIELDS.includes(key)) n = n / (measureUnit() === 'cm' ? 2.54 : 1) * (inputUnit === 'cm' ? 2.54 : 1);
+    return escapeHtml(n ?? '');
+  };
   openModal(measurement ? 'Edit body check-in' : 'Add body check-in', `<form id="measurement-form" data-id="${measurement?.id || ''}"><div class="form-grid">
     <div class="field"><label for="measurement-date">Date</label><input id="measurement-date" name="date" type="date" value="${measurement?.date || todayIso()}" required></div>
     <div class="field"><label for="measurement-weight">Bodyweight (${unit()})</label><input id="measurement-weight" name="weight" type="number" step="any" min="0" value="${value('weight')}"></div>
     <div class="field"><label>Body fat (%)</label><input name="bodyFat" type="number" step="any" min="0" max="100" value="${value('bodyFat')}"></div>
-    <div class="field"><label>Waist (${measureUnit()})</label><input name="waist" type="number" step="any" min="0" value="${value('waist')}"></div>
-    <div class="field"><label>Chest (${measureUnit()})</label><input name="chest" type="number" step="any" min="0" value="${value('chest')}"></div>
-    <div class="field"><label>Neck (${measureUnit()})</label><input name="neck" type="number" step="any" min="0" value="${value('neck')}"></div>
-    <div class="field"><label>Hips (${measureUnit()})</label><input name="hips" type="number" step="any" min="0" value="${value('hips')}"></div>
-    <div class="field"><label>Left arm (${measureUnit()})</label><input name="leftArm" type="number" step="any" min="0" value="${value('leftArm')}"></div>
-    <div class="field"><label>Right arm (${measureUnit()})</label><input name="rightArm" type="number" step="any" min="0" value="${value('rightArm')}"></div>
-    <div class="field"><label>Left thigh (${measureUnit()})</label><input name="leftThigh" type="number" step="any" min="0" value="${value('leftThigh')}"></div>
-    <div class="field"><label>Right thigh (${measureUnit()})</label><input name="rightThigh" type="number" step="any" min="0" value="${value('rightThigh')}"></div>
+    <div class="field full"><label>Enter circumferences in<select name="inputUnit" id="checkin-input-unit" data-previous="${inputUnit}"><option value="in" ${inputUnit === 'in' ? 'selected' : ''}>Inches</option><option value="cm" ${inputUnit === 'cm' ? 'selected' : ''}>Centimeters</option></select></label><small>Saved in inches; displayed using your settings.</small></div>
+    <div class="field"><label>Waist (${inputUnit})</label><input name="waist" type="number" step="any" min="0" value="${value('waist')}"></div>
+    <div class="field"><label>Chest (${inputUnit})</label><input name="chest" type="number" step="any" min="0" value="${value('chest')}"></div>
+    <div class="field"><label>Neck (${inputUnit})</label><input name="neck" type="number" step="any" min="0" value="${value('neck')}"></div>
+    <div class="field"><label>Hips (${inputUnit})</label><input name="hips" type="number" step="any" min="0" value="${value('hips')}"></div>
+    <div class="field"><label>Left arm (${inputUnit})</label><input name="leftArm" type="number" step="any" min="0" value="${value('leftArm')}"></div>
+    <div class="field"><label>Right arm (${inputUnit})</label><input name="rightArm" type="number" step="any" min="0" value="${value('rightArm')}"></div>
+    <div class="field"><label>Left thigh (${inputUnit})</label><input name="leftThigh" type="number" step="any" min="0" value="${value('leftThigh')}"></div>
+    <div class="field"><label>Right thigh (${inputUnit})</label><input name="rightThigh" type="number" step="any" min="0" value="${value('rightThigh')}"></div>
     <div class="field"><label>Resting heart rate (bpm)</label><input name="restingHeartRate" type="number" step="1" min="0" value="${value('restingHeartRate')}"></div>
     <div class="field"><label>Sleep (hours)</label><input name="sleep" type="number" step=".1" min="0" max="24" value="${value('sleep')}"></div>
     <div class="field full"><label>Notes</label><textarea name="notes">${value('notes')}</textarea></div>
@@ -843,21 +867,26 @@ async function saveGoal() {
   } catch (error) { toast(error.message, 'error'); }
 }
 
-function openExerciseModal() {
+function openExerciseModal(exercise = null) {
   const muscles = ['Chest', 'Back', 'Shoulders', 'Legs', 'Quads', 'Hamstrings', 'Glutes', 'Arms', 'Calves', 'Core', 'Other'];
   const equipment = ['Barbell', 'Dumbbell', 'Cable', 'Machine', 'Bodyweight', 'Kettlebell', 'Other'];
-  openModal('Add exercise', `<form id="exercise-form"><div class="form-grid">
-    <div class="field full"><label>Exercise name</label><input name="name" maxlength="100" required></div>
+  openModal(exercise ? 'Edit exercise' : 'Add exercise', `<form id="exercise-form" data-id="${exercise?.id || ''}"><div class="form-grid">
+    <div class="field full"><label>Exercise name</label><input name="name" maxlength="100" value="${escapeHtml(exercise?.name || '')}" required></div>
     <div class="field"><label>Muscle group</label><select name="muscle">${muscles.map(item => `<option>${item}</option>`).join('')}</select></div>
     <div class="field"><label>Equipment</label><select name="equipment">${equipment.map(item => `<option>${item}</option>`).join('')}</select></div>
-  </div></form>`, { footer: '<button class="button" data-action="close-modal">Cancel</button><button class="button primary" data-action="save-exercise">Add exercise</button>' });
+    <div class="field"><label>Family (shared name)</label><input name="family" value="${escapeHtml(exercise?.family || exercise?.name || '')}" list="families"><datalist id="families">${groupedExercises(state.exercises).map(e => `<option>${escapeHtml(familyName(e))}</option>`).join('')}</datalist></div>
+    <div class="field"><label>Variation (e.g. 15°, single arm)</label><input name="variation" list="variation-presets" value="${escapeHtml(exercise?.variation || '')}"><datalist id="variation-presets"><option>15°</option><option>30°</option><option>Single arm</option><option>Double arm</option></datalist></div>
+    <div class="field full"><label>Muscle targets</label><select name="targets" multiple size="6">${['chest-upper','chest-mid','shoulders-front','shoulders-side','shoulders-rear','lats','back-upper','posterior-chain','quads','hamstrings','glutes','biceps','triceps-long','triceps-lateral','triceps-medial','calves','core','hip-adductors','hip-abductors'].map(t => `<option ${exercise?.targets?.includes(t) ? 'selected' : ''}>${t}</option>`).join('')}</select><small>Select targets to include this exercise in muscle balance analysis. Leave unknown targets unselected.</small></div>
+  </div></form>`, { footer: '<button class="button" data-action="close-modal">Cancel</button><button class="button primary" data-action="save-exercise">Save exercise</button>' });
+  if (exercise) { document.querySelector('#exercise-form [name=muscle]').value = exercise.muscle; document.querySelector('#exercise-form [name=equipment]').value = exercise.equipment; }
 }
 
 async function saveExercise() {
   const form = document.querySelector('#exercise-form');
   const payload = Object.fromEntries(new FormData(form));
   try {
-    await api('/api/exercises', { method: 'POST', body: JSON.stringify(payload) });
+    payload.targets = new FormData(form).getAll('targets');
+    await api(form.dataset.id ? `/api/exercises/${form.dataset.id}` : '/api/exercises', { method: form.dataset.id ? 'PUT' : 'POST', body: JSON.stringify(payload) });
     closeModal(); await refresh(); toast('Exercise added.');
   } catch (error) { toast(error.message, 'error'); }
 }
@@ -883,6 +912,7 @@ document.addEventListener('click', async event => {
   if (action === 'new-goal') openGoalModal();
   if (action === 'edit-goal') openGoalModal(state.goals.find(item => item.id === target.dataset.id));
   if (action === 'delete-goal') deleteRecord('goals', target.dataset.id, 'Delete this goal?');
+  if (action === 'edit-exercise') openExerciseModal(state.exercises.find(e => e.id === target.dataset.id));
   if (action === 'new-exercise') openExerciseModal();
   if (action === 'delete-exercise') {
     const exercise = state.exercises.find(item => item.id === target.dataset.id);
@@ -1033,3 +1063,24 @@ refresh().catch(error => {
 });
 
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
+
+document.addEventListener('change', event => {
+  const target = event.target;
+  if (target.dataset.libraryVariation) openExerciseModal(state.exercises.find(e => e.id === target.value));
+  if (target.id === 'checkin-input-unit') {
+    const previous = target.dataset.previous;
+    for (const field of LENGTH_FIELDS) {
+      const input = document.querySelector(`#measurement-form [name="${field}"]`);
+      if (input.value !== '') input.value = Number(input.value) * (target.value === 'cm' ? 2.54 : 1 / 2.54);
+      input.previousElementSibling.textContent = input.previousElementSibling.textContent.replace(/\((in|cm)\)/, `(${target.value})`);
+    }
+    target.dataset.previous = target.value;
+    localStorage.setItem('ironlog-measurement-input', target.value);
+  }
+  if (target.dataset.variationIndex != null) {
+    syncWorkoutDraft();
+    const index = Number(target.dataset.variationIndex);
+    const selected = state.exercises.find(e => e.id === target.value);
+    if (selected && (!ui.workoutDraft.exercises[index].sets.some(s => Number(s.reps) > 0) || confirm('Changing variation replaces the entered sets. Continue?'))) { ui.workoutDraft.exercises[index] = createExerciseDraft(selected); renderWorkoutEntries(); persistWorkoutDraft(false); }
+  }
+});
