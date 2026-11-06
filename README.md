@@ -321,3 +321,16 @@ once and creates a backup before migrating the on-disk database.
 Recommendations use logged performance and exercise muscle targets. Review
 exercises marked **Muscle targets need review** in the library. Ollama rewrites
 the resulting findings; logging workouts does not train or fine-tune the model.
+
+## Tracking and interface updates
+
+- The dashboard's weekly counts use the configured calendar week. New entry dates use the browser's local date.
+- Close a workout or use **Save for later** to preserve its draft. **Resume workout** restores it, including after a reload. **Discard** explicitly removes it; finishing removes the draft after a successful save.
+- The exercise library offers Recent and All views. Selecting a variation updates its record, session count, and latest date. Edit and delete actions are in the card's Actions menu.
+- Strength charts offer estimated strength, best set load, and session volume with 4-week, 12-week, and all-time ranges. Points are spaced by date; tap a point or open View data for the values.
+- Body uses Weight, Measurements, and Recovery sections. Each metric shows its latest populated value and date, even when a newer check-in leaves that field blank.
+- Exercise muscle targets are grouped checkboxes, including **Lower back**. Load mode can be entered weight or bodyweight plus added weight; new variations inherit it.
+- Strength goals reference a specific variation ID. Observations compare actual sets within two reps across three distinct sessions and show the supporting dates and loads. AI explanations supplement the calculated action rather than replacing it.
+- Schema version 4 preserves historical loads while adding explicit load modes and goal references. Startup creates a backup before migrating an older database. Existing recommendations are marked stale until refreshed with the new analysis.
+
+Run `npm test` for regression checks. Browser verification should use a separate `DATA_FILE` and port so test entries never touch the live log.

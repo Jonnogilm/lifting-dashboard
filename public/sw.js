@@ -1,5 +1,5 @@
-const CACHE = 'ironlog-shell-v7';
-const ASSETS = ['/', '/styles.css', '/app.js', '/app.webmanifest'];
+const CACHE = 'ironlog-shell-v8';
+const ASSETS = ['/', '/styles.css?v=8', '/app.js?v=8', '/app.webmanifest'];
 
 self.addEventListener('install', event => {
   event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(ASSETS)));

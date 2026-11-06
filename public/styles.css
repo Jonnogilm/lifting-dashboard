@@ -358,3 +358,75 @@ h3 { margin-bottom: 0; font-size: 14px; letter-spacing: 0; }
 }
 
 .variation-presets { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0; }
+
+/* Compact summaries and focused controls. */
+[hidden] { display: none !important; }
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0, 0, 0, 0); }
+button:focus-visible, summary:focus-visible, a:focus-visible { outline: 3px solid var(--blue); outline-offset: 3px; }
+button:disabled { cursor: wait; opacity: .65; }
+.link-button { min-height: 40px; padding: 8px 4px; }
+.panel-subtitle, .exercise-meta, .stat-meta, .session-meta, .last-set { font-size: 12px; line-height: 1.5; }
+.field label, .field-label { font-size: 12px; text-transform: none; }
+.disclosure { margin: 12px 0; padding: 12px 14px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); }
+summary { cursor: pointer; min-height: 36px; padding: 8px 0; font-size: 13px; font-weight: 650; }
+details[open] > summary { margin-bottom: 10px; }
+.draft-banner { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; border: 1px solid var(--green); border-radius: 8px; background: var(--green-soft); padding: 12px 16px; margin-bottom: 20px; }
+.draft-banner > div { display: grid; gap: 4px; margin-right: auto; }
+.draft-banner span { font-size: 12px; }
+.chart-toolbar, .segmented { display: flex; align-items: end; flex-wrap: wrap; gap: 10px; margin: 12px 0; }
+.chart-toolbar label, .toolbar > label { display: grid; gap: 5px; font-size: 12px; color: var(--ink-soft); }
+.select-compact { min-height: 40px; font-size: 13px; }
+.trend-summary { display: flex; flex-wrap: wrap; gap: 12px 24px; padding: 12px 0; font-size: 13px; line-height: 1.5; }
+.trend-summary strong { font-size: 16px; }
+.interactive-chart .line-chart { height: auto; aspect-ratio: 700 / 260; }
+.chart-hit { fill: transparent; cursor: pointer; }
+[data-chart-point]:focus .chart-point { stroke-width: 4px; fill: var(--acid); }
+.chart-axis-label { font-size: 12px; fill: var(--ink-soft); }
+.chart-readout { min-height: 42px; margin: 4px 0; font-size: 12px; color: var(--ink-soft); line-height: 1.5; }
+.chart-data .data-table { min-width: 0; }
+.chart-data th, .chart-data td { padding: 10px; white-space: normal; }
+.chart-data summary { color: var(--blue); }
+.body-trend-panel { margin-bottom: 14px; }
+.body-trend-panel .chart-wrap { min-height: 0; }
+.metric-summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 10px; margin: 12px 0; }
+.metric-summary > div { display: grid; gap: 6px; padding: 14px; border: 1px solid var(--line); border-radius: 8px; background: white; }
+.metric-summary strong { font-size: 23px; }
+.metric-summary span, .metric-summary small { color: var(--ink-soft); font-size: 12px; line-height: 1.5; }
+.segmented .button[aria-pressed="true"] { background: var(--ink); color: white; }
+.exercise-record { gap: 8px; flex-wrap: wrap; font-size: 12px; }
+.exercise-card .field { margin: 8px 0; }
+.actions-menu { position: relative; margin-left: auto; }
+.actions-menu summary { color: var(--ink-soft); font-size: 12px; }
+.actions-menu[open] { z-index: 2; }
+.actions-menu[open] button { display: block; width: 160px; text-align: left; background: white; }
+.last-set { color: var(--ink-soft); margin: 0 0 10px; }
+.exercise-entry > label { display: grid; gap: 5px; margin-bottom: 12px; font-size: 12px; }
+.exercise-entry select { min-height: 42px; max-width: 100%; border: 1px solid var(--line); border-radius: 6px; background: white; padding: 8px; }
+.form-error { padding: 12px; background: #fff0ef; color: var(--danger); border-radius: 6px; font-size: 13px; }
+.target-groups { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.target-groups fieldset { border: 1px solid var(--line); border-radius: 6px; padding: 8px; min-width: 0; }
+.target-groups legend { font-size: 13px; font-weight: 700; }
+.field .check-label, .check-label { display: flex; align-items: center; gap: 8px; min-height: 42px; font-size: 13px; font-weight: 400; text-transform: none; }
+.field .check-label input, .check-label input { width: 20px; height: 20px; min-height: 20px; flex-shrink: 0; }
+.target-counts { columns: 2; padding-left: 20px; font-size: 13px; }
+.recommendation-card p, .recommendation-card li, .recommendation-panel > details p { font-size: 13px; line-height: 1.55; }
+.recommendation-grid { grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }
+.recommendation-card h3 { font-size: 15px; }
+@media (max-width: 600px) {
+  .interactive-chart .line-chart { aspect-ratio: 340 / 220; }
+  .metric-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .metric-summary strong { font-size: 21px; }
+  .chart-toolbar label { flex: 1 1 130px; }
+  .chart-toolbar .select-compact { max-width: none; width: 100%; }
+  .chart-readout { min-height: 58px; }
+  .trend-summary { flex-direction: column; gap: 8px; }
+  .target-groups { grid-template-columns: 1fr; }
+  .field input, .field select, .field textarea { font-size: 16px; }
+  .page-actions { flex-wrap: wrap; }
+  .page-actions .button:not(.primary) { display: inline-flex; }
+  .page-header { flex-wrap: wrap; }
+  .sets-header { font-size: 11px; }
+  .set-row input { height: 44px; }
+  .remove-set { min-width: 28px; height: 44px; }
+  .bottom-nav a small, .week-label { font-size: 11px; }
+}

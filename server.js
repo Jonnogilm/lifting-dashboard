@@ -50,17 +50,18 @@ function inferredTargets(name) {
 function normalizeExercise(body, existing = {}) {
   const name = cleanText(body.name, 100);
   if (!name) throw Object.assign(new Error('Exercise name is required'), { status: 400 });
-  const allowed = new Set(Object.values(TARGETS).flat().concat(['hip-adductors', 'hip-abductors']));
+  const allowed = new Set(Object.values(TARGETS).flat().concat(['hip-adductors', 'hip-abductors', 'lower-back']));
   return { ...existing, id: existing.id || randomUUID(), name,
     muscle: cleanText(body.muscle, 60) || 'Other', equipment: cleanText(body.equipment, 60) || 'Other',
     family: cleanText(body.family, 100) || name, variation: cleanText(body.variation, 100),
+    loadMode: ['bodyweight', 'external'].includes(body.loadMode) ? body.loadMode : existing.loadMode || (isTrackedBodyweight(body.family || name) ? 'bodyweight' : 'external'),
     targets: Array.isArray(body.targets) ? [...new Set(body.targets.filter(t => allowed.has(t)))] : inferredTargets(name),
     builtIn: existing.builtIn || false };
 }
 
 function emptyDatabase() {
   return {
-    version: 3,
+    version: 4,
     settings: {
       athleteName: 'Athlete',
       weightUnit: 'lb',
@@ -72,6 +73,7 @@ function emptyDatabase() {
     workouts: [],
     measurements: [],
     goals: [],
+    recommendationRevision: 0,
     recommendations: null
   };
 }
@@ -88,12 +90,12 @@ async function ensureDatabase() {
   }
   const raw = await fsp.readFile(DATA_FILE, 'utf8');
   const parsed = JSON.parse(raw);
-  if (Number(parsed?.version || 1) < 3) {
+  if (Number(parsed?.version || 1) < 4) {
     const stamp = new Date().toISOString().replaceAll(':', '-').replaceAll('.', '-');
     const backup = path.join(path.dirname(DATA_FILE), `${path.basename(DATA_FILE, '.json')}.v${parsed.version || 1}-${stamp}.json`);
     await fsp.copyFile(DATA_FILE, backup, fs.constants.COPYFILE_EXCL);
     await saveDatabase(normalizeDatabase(parsed));
-    console.log(`Database migrated to version 3. Backup: ${backup}`);
+    console.log(`Database migrated to version 4. Backup: ${backup}`);
   }
 }
 
@@ -137,9 +139,10 @@ function normalizeDatabase(value) {
   const byName = new Map(suppliedExercises.map(item => [item.name, item]));
   const exercises = suppliedExercises.map(item => ({
     ...item,
-    targets: Array.isArray(item.targets) && item.targets.length ? item.targets : inferredTargets(item.name),
+    targets: Array.isArray(item.targets) ? item.targets : inferredTargets(item.name),
     family: cleanText(item.family, 100) || item.name,
-    variation: cleanText(item.variation, 100)
+    variation: cleanText(item.variation, 100),
+    loadMode: ['bodyweight', 'external'].includes(item.loadMode) ? item.loadMode : (isTrackedBodyweight(item.family || item.name) ? 'bodyweight' : 'external')
   }));
   for (const builtIn of exerciseCatalog) {
     if (!byName.has(builtIn.name) && !deletedExerciseNames.has(builtIn.name)) exercises.push(builtIn);
@@ -154,10 +157,10 @@ function normalizeDatabase(value) {
   }
   const workouts = [];
   for (const workout of Array.isArray(value.workouts) ? value.workouts : []) {
-    try { workouts.push(normalizeWorkout(workout, workout)); } catch (error) { console.warn(`Skipping invalid stored workout: ${error.message}`); }
+    try { workouts.push(normalizeWorkout(workout, workout, exercises)); } catch (error) { console.warn(`Skipping invalid stored workout: ${error.message}`); }
   }
   return {
-    version: 3,
+    version: 4,
     settings: { ...fallback.settings, ...(value.settings || {}) },
     exercises,
     deletedExercises,
@@ -167,7 +170,8 @@ function normalizeDatabase(value) {
       if (Number(value.version || 1) < 3 && value.settings?.measurementUnit === 'cm') for (const field of LENGTH_FIELDS) if (result[field] != null) result[field] /= 2.54;
       return result;
     }),
-    goals: Array.isArray(value.goals) ? value.goals : [],
+    goals: (Array.isArray(value.goals) ? value.goals : []).map(goal => ({ ...goal, exerciseId: goal.exerciseId || exercises.find(e => e.name === goal.exerciseName)?.id || '' })),
+    recommendationRevision: Number(value.recommendationRevision || 0),
     recommendations: value.recommendations && typeof value.recommendations === 'object' ? value.recommendations : null
   };
 }
@@ -213,14 +217,35 @@ function finiteNumber(value, fallback = null) {
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
-function normalizeWorkout(input, existing = {}) {
+function badInput(message) { return Object.assign(new Error(message), { status: 400 }); }
+function validateDate(value) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(value)) || !Number.isFinite(Date.parse(value)) || new Date(value).toISOString().slice(0, 10) !== value) throw badInput('Enter a valid date.');
+}
+function validateNumber(value, label, min, max = null, required = false, integer = false) {
+  if (value === '' || value == null) { if (required) throw badInput(`${label} is required.`); return; }
+  const n = Number(value);
+  if (!Number.isFinite(n) || n < min || (max != null && n > max) || (integer && !Number.isInteger(n))) throw badInput(`${label} is outside its valid range.`);
+}
+
+function normalizeWorkout(input, existing = {}, catalog = [], strict = false) {
+  if (strict) validateDate(input.date);
   const exercises = Array.isArray(input.exercises) ? input.exercises : [];
   if (!cleanText(input.date) || !exercises.length) {
     throw Object.assign(new Error('A date and at least one exercise are required'), { status: 400 });
   }
   const normalizedExercises = exercises.map(item => {
-    const name = cleanText(item.name, 100) || 'Exercise';
-    const trackedBodyweight = isTrackedBodyweight(name) && !((/^dips?$/i.test(name)) && item.sets?.some(set => set.bodyweight == null && item.bodyweight == null));
+    const definition = catalog.find(e => e.id === item.exerciseId);
+    const name = cleanText(definition?.name || item.name, 100) || 'Exercise';
+    const mode = (!strict && item.loadMode) || definition?.loadMode || item.loadMode || (isTrackedBodyweight(definition?.family || item.family || name) ? 'bodyweight' : 'external');
+    const legacyPull = /^(pull-up|chin-up)$/i.test(name);
+    const hasComponents = item.bodyweight != null || item.sets?.some(set => set.bodyweight != null);
+    // Keep ambiguous historical loads unchanged until the user supplies components.
+    const trackedBodyweight = mode === 'bodyweight' && (strict || hasComponents || legacyPull);
+    if (strict) for (const set of item.sets || []) {
+      validateNumber(set.reps, 'Reps', 1, null, true, true);
+      validateNumber(trackedBodyweight ? set.addedWeight : set.weight, 'Weight', 0, null, true);
+      if (trackedBodyweight) validateNumber(set.bodyweight ?? item.bodyweight, 'Bodyweight', 0.001, null, true);
+    }
     const itemBodyweight = Math.max(0, finiteNumber(item.bodyweight, 0));
     const sets = (Array.isArray(item.sets) ? item.sets : []).map(set => {
       const base = {
@@ -243,8 +268,9 @@ function normalizeWorkout(input, existing = {}) {
       id: item.id || randomUUID(),
       exerciseId: cleanText(item.exerciseId, 80),
       name,
-      family: cleanText(item.family, 100),
-      variation: cleanText(item.variation, 100),
+      family: cleanText(definition?.family || item.family, 100),
+      variation: cleanText(definition?.variation || item.variation, 100),
+      loadMode: trackedBodyweight ? 'bodyweight' : 'external',
       ...(trackedBodyweight ? { bodyweight: sets[0]?.bodyweight ?? itemBodyweight } : {}),
       sets
     };
@@ -266,6 +292,8 @@ function normalizeWorkout(input, existing = {}) {
 }
 
 function normalizeMeasurement(input, existing = {}) {
+  validateDate(input.date);
+  if (input.inputUnit != null && !['in', 'cm'].includes(input.inputUnit)) throw badInput('Choose inches or centimeters.');
   if (!cleanText(input.date)) {
     throw Object.assign(new Error('A measurement date is required'), { status: 400 });
   }
@@ -278,12 +306,18 @@ function normalizeMeasurement(input, existing = {}) {
     updatedAt: new Date().toISOString(),
     createdAt: existing.createdAt || new Date().toISOString()
   };
-  for (const field of fields) result[field] = finiteNumber(input[field]);
+  for (const field of fields) {
+    validateNumber(input[field], field, 0, field === 'bodyFat' ? 100 : field === 'sleep' ? 24 : null);
+    result[field] = finiteNumber(input[field]);
+  }
   if (input.inputUnit === 'cm') for (const field of LENGTH_FIELDS) if (result[field] != null) result[field] /= 2.54;
   return result;
 }
 
 function normalizeGoal(input, existing = {}) {
+  validateNumber(input.target, 'Target', 0, null, true);
+  validateNumber(input.start, 'Starting value', 0);
+  if (input.deadline) validateDate(input.deadline);
   const title = cleanText(input.title, 120);
   const target = finiteNumber(input.target);
   if (!title || target === null) {
@@ -295,6 +329,7 @@ function normalizeGoal(input, existing = {}) {
     title,
     type: ['strength', 'bodyweight', 'consistency'].includes(input.type) ? input.type : 'strength',
     exerciseName: cleanText(input.exerciseName, 100),
+    exerciseId: cleanText(input.exerciseId, 80),
     target,
     start: finiteNumber(input.start, 0),
     deadline: cleanText(input.deadline, 10),
@@ -352,7 +387,7 @@ let queuedRecommendationSource = null;
 function recommendationPayload(database) {
   const cached = database.recommendations;
   const status = recommendationStatus.status === 'idle' && cached ? 'ready' : recommendationStatus.status;
-  return { status, error: recommendationStatus.error || '', ...(cached || {}) };
+  return { ...(cached || {}), status, stale: !cached || cached.analysisVersion !== 2 || cached.sourceRevision !== database.recommendationRevision, error: recommendationStatus.error || '' };
 }
 
 function applyNarratedRecommendation(payload, item) {
@@ -371,7 +406,7 @@ function applyNarratedRecommendation(payload, item) {
   if (!rewrite) throw new Error('Local model returned no recommendation');
   const duplicatesTitle = rewrite.toLowerCase() === item.title.toLowerCase();
   const recommendation = rewrite.length >= 60 && !duplicatesTitle ? rewrite : item.recommendation;
-  return { ...item, recommendation };
+  return { ...item, aiExplanation: recommendation !== item.recommendation ? recommendation : null };
 }
 
 async function narrateRecommendations(analysis) {
@@ -438,6 +473,10 @@ function scheduleRecommendations(sourceWorkoutId = 'manual') {
         console.warn('Recommendation model unavailable:', modelError);
       }
       const recommendations = {
+        analysisVersion: 2,
+        sourceRevision: database.recommendationRevision,
+        targetSets: analysis.targetSets,
+        coverage: analysis.coverage,
         generatedAt: new Date().toISOString(),
         sourceWorkoutId: source,
         model: OLLAMA_MODEL,
@@ -479,17 +518,18 @@ async function handleApi(req, res, pathname) {
   let queueRecommendation = false;
 
   if (method === 'POST' && pathname === '/api/workouts') {
-    result = normalizeWorkout(body);
+    result = normalizeWorkout(body, {}, db.exercises, true);
     db.workouts.push(result);
     queueRecommendation = true;
   } else if (method === 'PUT' && pathname.startsWith('/api/workouts/')) {
     const index = findIndexOrThrow(db.workouts, pathname.split('/').pop());
-    result = normalizeWorkout(body, db.workouts[index]);
+    result = normalizeWorkout(body, db.workouts[index], db.exercises, true);
     db.workouts[index] = result;
     queueRecommendation = true;
   } else if (method === 'DELETE' && pathname.startsWith('/api/workouts/')) {
     const index = findIndexOrThrow(db.workouts, pathname.split('/').pop());
     [result] = db.workouts.splice(index, 1);
+    queueRecommendation = true;
   } else if (method === 'POST' && pathname === '/api/measurements') {
     result = normalizeMeasurement({ ...body, inputUnit: body.inputUnit || db.settings.measurementUnit });
     db.measurements.push(result);
@@ -513,7 +553,8 @@ async function handleApi(req, res, pathname) {
   } else if (method === 'POST' && pathname === '/api/exercises') {
     const name = cleanText(body.name, 100);
     if (!name) throw Object.assign(new Error('Exercise name is required'), { status: 400 });
-    result = normalizeExercise(body);
+    const parent = db.exercises.find(e => (e.family || e.name) === body.family);
+    result = normalizeExercise({ ...body, loadMode: body.loadMode || parent?.loadMode });
     if (!result.targets.length) result.targets = db.exercises.find(e => (e.family || e.name) === result.family && e.targets?.length)?.targets || inferredTargets(result.name);
     queueRecommendation = true;
     db.exercises.push(result);
@@ -525,7 +566,7 @@ async function handleApi(req, res, pathname) {
     for (const workout of db.workouts) for (const entry of workout.exercises) if (entry.exerciseId === result.id) {
       entry.name = result.name; entry.family = result.family; entry.variation = result.variation;
     }
-    for (const goal of db.goals) if (goal.exerciseName === oldName) goal.exerciseName = result.name;
+    for (const goal of db.goals) if (goal.exerciseId === result.id || (!goal.exerciseId && goal.exerciseName === oldName)) { goal.exerciseId = result.id; goal.exerciseName = result.name; }
     queueRecommendation = true;
   } else if (method === 'DELETE' && pathname.startsWith('/api/exercises/')) {
     queueRecommendation = true;
@@ -533,16 +574,20 @@ async function handleApi(req, res, pathname) {
     [result] = db.exercises.splice(index, 1);
     if (result.builtIn && !db.deletedExercises.includes(result.name)) db.deletedExercises.push(result.name);
   } else if (method === 'PUT' && pathname === '/api/settings') {
+    queueRecommendation = true;
     const nextWeightUnit = body.weightUnit === 'kg' ? 'kg' : 'lb';
     const nextMeasurementUnit = body.measurementUnit === 'cm' ? 'cm' : 'in';
     if (nextWeightUnit !== db.settings.weightUnit) {
       const factor = nextWeightUnit === 'kg' ? 0.45359237 : 2.20462262;
       const convert = value => value == null ? value : Math.round(value * factor * 1000) / 1000;
-      db.workouts.forEach(workout => workout.exercises.forEach(exercise => exercise.sets.forEach(set => {
+      db.workouts.forEach(workout => workout.exercises.forEach(exercise => {
+        if (exercise.bodyweight != null) exercise.bodyweight = convert(exercise.bodyweight);
+        exercise.sets.forEach(set => {
         if (set.bodyweight != null) set.bodyweight = convert(set.bodyweight);
         if (set.addedWeight != null) set.addedWeight = convert(set.addedWeight);
         set.weight = set.bodyweight != null ? Math.round((set.bodyweight + (set.addedWeight || 0)) * 1000) / 1000 : convert(set.weight);
-      })));
+        });
+      }));
       db.measurements.forEach(measurement => { measurement.weight = convert(measurement.weight); });
       db.goals.filter(goal => goal.type === 'strength' || goal.type === 'bodyweight').forEach(goal => {
         goal.start = convert(goal.start);
@@ -558,20 +603,24 @@ async function handleApi(req, res, pathname) {
     result = db.settings;
   } else if (method === 'POST' && pathname === '/api/import') {
     db = normalizeDatabase(body);
+    queueRecommendation = true;
     result = db;
   } else if (method === 'POST' && pathname === '/api/demo') {
     db = demoDatabase(db);
+    queueRecommendation = true;
     result = db;
   } else if (method === 'POST' && pathname === '/api/reset') {
     db = emptyDatabase();
+    queueRecommendation = true;
     result = db;
   } else {
     return json(res, 404, { error: 'Not found' });
   }
 
+  if (queueRecommendation) db.recommendationRevision += 1;
   await saveDatabase(db);
   json(res, 200, result);
-  if (queueRecommendation) scheduleRecommendations(result.id);
+  if (queueRecommendation) scheduleRecommendations(result.id || 'data-change');
   return undefined;
 }
 
@@ -628,4 +677,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { createServer, emptyDatabase, normalizeDatabase, normalizeWorkout, normalizeMeasurement, normalizeGoal, applyNarratedRecommendation };
+module.exports = { createServer, emptyDatabase, normalizeDatabase, normalizeWorkout, normalizeMeasurement, normalizeGoal, normalizeExercise, recommendationPayload, applyNarratedRecommendation };

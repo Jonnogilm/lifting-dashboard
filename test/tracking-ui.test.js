@@ -6,7 +6,7 @@ const vm = require('node:vm');
 function tracking() {
   const source = fs.readFileSync(require.resolve('../public/app.js'), 'utf8');
   const context = vm.createContext({ document: { querySelector: () => ({}) }, location: { hash: '' } });
-  vm.runInContext(source.slice(0, source.indexOf('function weeksData(')), context);
+  vm.runInContext(source.slice(0, source.indexOf("document.addEventListener('click'")), context);
   vm.runInContext(`
     function lineChart(points) { return JSON.stringify(points); }
     state = {
@@ -49,14 +49,14 @@ test('graphs and personal records filter by variant ID, excluding incomplete set
   assert.equal(run("strengthHistory('45').length"), 0);
   run("ui.strengthExercise = 'Incline Bench Press'; ui.strengthVariation = '45';");
   const html = run('renderStrengthPanel(true)');
-  assert.match(html, /No weighted sets logged for this variation yet/);
+  assert.match(html, /No weighted sets logged for this variation in this period/);
   assert.ok(!html.includes('Personal record ·'));
 });
 
 test('selection is preserved across renders and family changes', () => {
   const run = tracking();
   run("ui.strengthExercise = 'Incline Bench Press'; ui.strengthVariation = '15'; selectStrengthTracking();");
-  assert.match(run('renderStrengthPanel(true)'), /Personal record · Incline Bench Press · 15°/);
+  assert.match(run('renderStrengthPanel(true)'), /Estimated 1RM: 120 lb/);
   run("ui.strengthExercise = 'Row'; ui.strengthVariation = ''; selectStrengthTracking();");
   run("ui.strengthExercise = 'Incline Bench Press'; ui.strengthVariation = ''; selectStrengthTracking();");
   assert.equal(run('ui.strengthVariation'), '15');
@@ -75,7 +75,7 @@ test('quick variations inherit metadata without copying the original ID or modif
   const payload = JSON.parse(run("JSON.stringify(variationPayload(state.exercises[1], '  60°  '))"));
   assert.deepEqual(payload, {
     name: 'Incline Bench Press (60°)', family: 'Incline Bench Press', variation: '60°',
-    muscle: 'Chest', equipment: 'Barbell', targets: ['chest-upper']
+    muscle: 'Chest', equipment: 'Barbell', loadMode: 'external', targets: ['chest-upper']
   });
   run("variationPayload(state.exercises[1], '60°').targets.push('biceps');");
   assert.equal(run('state.exercises[1].targets.length'), 1);
@@ -94,7 +94,6 @@ test('quick variation rejects empty, duplicate and overlong names', () => {
 test('quick variation dialog presents one name field with inherited context and angle presets', () => {
   const run = tracking();
   const source = fs.readFileSync(require.resolve('../public/app.js'), 'utf8');
-  run(source.slice(source.indexOf('function openVariationModal('), source.indexOf('function openExerciseModal(')));
   run('let dialog; function familyName(e) { return e.family || e.name; } function openModal(title, body, options) { dialog = { title, body, options }; }');
   run('openVariationModal(state.exercises[1]);');
   const body = run('dialog.body');
